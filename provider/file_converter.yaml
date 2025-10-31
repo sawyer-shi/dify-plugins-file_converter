@@ -1,0 +1,17 @@
+identity:
+  author: "sawyer-shi"
+  name: "file_converter"
+  label:
+    en_US: "file_converter"
+    zh_Hans: "file_converter"
+    pt_BR: "file_converter"
+  description:
+    en_US: "File Converter: Supports PDF2Image, Image2PDF, Word2PDF, PDF2Word, PPT2PDF, and Excel2PDF."
+    zh_Hans: "File Converter: Supports PDF2Image, Image2PDF, Word2PDF, PDF2Word, PPT2PDF, and Excel2PDF."
+    pt_BR: "File Converter: Supports PDF2Image, Image2PDF, Word2PDF, PDF2Word, PPT2PDF, and Excel2PDF."
+  icon: "icon.svg"
+tools:
+  - tools/file_converter.yaml
+extra:
+  python:
+    source: provider/file_converter.py

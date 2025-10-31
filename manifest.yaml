@@ -1,0 +1,52 @@
+version: 0.0.1
+type: plugin
+author: sawyer-shi
+name: file_converter
+label:
+  en_US: file_converter
+  ja_JP: file_converter
+  zh_Hans: file_converter
+  pt_BR: file_converter
+description:
+  en_US: 'File Converter: Supports PDF2Image, Image2PDF, Word2PDF, PDF2Word, PPT2PDF, and Excel2PDF.'
+  ja_JP: 'File Converter: Supports PDF2Image, Image2PDF, Word2PDF, PDF2Word, PPT2PDF, and Excel2PDF.'
+  zh_Hans: 'File Converter: Supports PDF2Image, Image2PDF, Word2PDF, PDF2Word, PPT2PDF, and Excel2PDF.'
+  pt_BR: 'File Converter: Supports PDF2Image, Image2PDF, Word2PDF, PDF2Word, PPT2PDF, and Excel2PDF.'
+icon: icon.svg
+resource:
+  memory: 268435456
+  permission:
+    tool:
+      enabled: true
+    model:
+      enabled: true
+      llm: true
+      text_embedding: false
+      rerank: false
+      tts: false
+      speech2text: false
+      moderation: false
+    endpoint:
+      enabled: true
+    app:
+      enabled: true
+    storage:
+      enabled: true
+      size: 1048576
+plugins:
+  tools:
+    - provider/file_converter.yaml
+meta:
+  version: 0.0.1
+  arch:
+    - amd64
+    - arm64
+  runner:
+    language: python
+    version: "3.12"
+    entrypoint: main
+  minimum_dify_version: null
+created_at: 2025-10-31T11:30:49.8778233+08:00
+privacy: PRIVACY.md
+repo: https://github.com/sawyer-shi/dify-plugins-file_converter
+verified: false
