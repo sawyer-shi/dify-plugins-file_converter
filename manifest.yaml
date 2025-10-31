@@ -1,20 +1,19 @@
 version: 0.0.1
 type: plugin
+tags: 
+  - productivity
+  - utilities
 author: sawyer-shi
 name: file_converter
 label:
-  en_US: file_converter
-  ja_JP: file_converter
-  zh_Hans: file_converter
-  pt_BR: file_converter
+  en_US: File Converter
+  zh_Hans: 文件转换器
 description:
   en_US: 'File Converter: Supports PDF2Image, Image2PDF, Word2PDF, PDF2Word, PPT2PDF, and Excel2PDF.'
-  ja_JP: 'File Converter: Supports PDF2Image, Image2PDF, Word2PDF, PDF2Word, PPT2PDF, and Excel2PDF.'
-  zh_Hans: 'File Converter: Supports PDF2Image, Image2PDF, Word2PDF, PDF2Word, PPT2PDF, and Excel2PDF.'
-  pt_BR: 'File Converter: Supports PDF2Image, Image2PDF, Word2PDF, PDF2Word, PPT2PDF, and Excel2PDF.'
-icon: icon.svg
+  zh_Hans: '文件转换器：支持PDF转图片、图片转PDF、Word转PDF‌、PDF转Word‌、PPT转PDF‌、Excel转PDF。'
+icon: icon.png
 resource:
-  memory: 268435456
+  memory: 104857600
   permission:
     tool:
       enabled: true
@@ -32,7 +31,7 @@ resource:
       enabled: true
     storage:
       enabled: true
-      size: 1048576
+      size: 104857600
 plugins:
   tools:
     - provider/file_converter.yaml

@@ -1,0 +1,26 @@
+identity:
+  name: "excel_2_pdf"
+  author: "sawyer-shi"
+  label:
+    en_US: "Excel to PDF Converter"
+    zh_Hans: "Excel转PDF转换器"
+description:
+  human:
+    en_US: "Convert Excel spreadsheets (.xls, .xlsx) to PDF format."
+    zh_Hans: "将Excel电子表格（.xls, .xlsx）转换为PDF格式。"
+  llm: "A tool that converts Excel spreadsheets (.xls, .xlsx) to PDF format using python-office library."
+parameters:
+  - name: input_file
+    type: file
+    required: true
+    label:
+      en_US: Excel Spreadsheet
+      zh_Hans: Excel电子表格
+    human_description:
+      en_US: "Select the Excel spreadsheet you want to convert to PDF."
+      zh_Hans: "选择您想要转换为PDF的Excel电子表格。"
+    llm_description: "The Excel spreadsheet file to be converted to PDF"
+    form: form
+extra:
+  python:
+    source: tools/excel_2_pdf.py

@@ -1,0 +1,59 @@
+identity:
+  name: "pdf_2_image"
+  author: "sawyer-shi"
+  label:
+    en_US: "PDF to Image Converter"
+    zh_Hans: "PDF转图片转换器"
+description:
+  human:
+    en_US: "Convert PDF documents to image format (.jpg, .jpeg, .png, .bmp, .tiff)."
+    zh_Hans: "将PDF文档转换为图片格式（.jpg, .jpeg, .png, .bmp, .tiff）。"
+  llm: "A tool that converts PDF documents to image format (.jpg, .jpeg, .png, .bmp, .tiff) using python-office library."
+parameters:
+  - name: input_file
+    type: file
+    required: true
+    label:
+      en_US: PDF Document
+      zh_Hans: PDF文档
+    human_description:
+      en_US: "Select the PDF document you want to convert to images."
+      zh_Hans: "选择您想要转换为图片的PDF文档。"
+    llm_description: "The PDF document file to be converted to images"
+    form: form
+  - name: output_format
+    type: select
+    required: false
+    label:
+      en_US: Output Format
+      zh_Hans: 输出格式
+    human_description:
+      en_US: "Select the output format for the images."
+      zh_Hans: "选择图片的输出格式。"
+    llm_description: "The output format for the images: jpg, jpeg, png, bmp, or tiff"
+    form: form
+    default: "png"
+    options:
+      - value: "jpg"
+        label:
+          en_US: ".jpg"
+          zh_Hans: ".jpg"
+      - value: "jpeg"
+        label:
+          en_US: ".jpeg"
+          zh_Hans: ".jpeg"
+      - value: "png"
+        label:
+          en_US: ".png"
+          zh_Hans: ".png"
+      - value: "bmp"
+        label:
+          en_US: ".bmp"
+          zh_Hans: ".bmp"
+      - value: "tiff"
+        label:
+          en_US: ".tiff"
+          zh_Hans: ".tiff"
+extra:
+  python:
+    source: tools/pdf_2_image.py

@@ -1,0 +1,26 @@
+identity:
+  name: "ppt_2_pdf"
+  author: "sawyer-shi"
+  label:
+    en_US: "PPT to PDF Converter"
+    zh_Hans: "PPT转PDF转换器"
+description:
+  human:
+    en_US: "Convert PowerPoint presentations (.ppt, .pptx) to PDF format."
+    zh_Hans: "将PowerPoint演示文稿（.ppt, .pptx）转换为PDF格式。"
+  llm: "A tool that converts PowerPoint presentations (.ppt, .pptx) to PDF format using python-office library."
+parameters:
+  - name: input_file
+    type: file
+    required: true
+    label:
+      en_US: PowerPoint Presentation
+      zh_Hans: PowerPoint演示文稿
+    human_description:
+      en_US: "Select the PowerPoint presentation you want to convert to PDF."
+      zh_Hans: "选择您想要转换为PDF的PowerPoint演示文稿。"
+    llm_description: "The PowerPoint presentation file to be converted to PDF"
+    form: form
+extra:
+  python:
+    source: tools/ppt_2_pdf.py

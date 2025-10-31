@@ -1,0 +1,26 @@
+identity:
+  name: "image_2_pdf"
+  author: "sawyer-shi"
+  label:
+    en_US: "Image to PDF Converter"
+    zh_Hans: "图片转PDF转换器"
+description:
+  human:
+    en_US: "Convert image files (.jpg, .jpeg, .png, .bmp, .tiff) to PDF format."
+    zh_Hans: "将图片文件（.jpg, .jpeg, .png, .bmp, .tiff）转换为PDF格式。"
+  llm: "A tool that converts image files (.jpg, .jpeg, .png, .bmp, .tiff) to PDF format using python-office library."
+parameters:
+  - name: input_file
+    type: file
+    required: true
+    label:
+      en_US: Image File
+      zh_Hans: 图片文件
+    human_description:
+      en_US: "Select the image file you want to convert to PDF."
+      zh_Hans: "选择您想要转换为PDF的图片文件。"
+    llm_description: "The image file to be converted to PDF"
+    form: form
+extra:
+  python:
+    source: tools/image_2_pdf.py
