@@ -4,7 +4,7 @@ pytest>=7.0.0
 pdf2image>=1.16.0
 # pdf2docx>=0.5.6  # Replaced with PyMuPDF
 PyMuPDF>=1.23.0
-docx2pdf>=0.1.8
+# docx2pdf>=0.1.8  # Replaced with Spire.Doc
 openpyxl>=3.0.9
 reportlab>=3.6.0
 Pillow>=9.0.0
@@ -13,3 +13,4 @@ python-docx>=0.8.11
 poppler-utils>=0.1.0
 # Additional dependencies for PPT to PDF conversion
 python-pptx>=0.6.21
+# spire-doc>=10.8.0  # Replaced with python-docx

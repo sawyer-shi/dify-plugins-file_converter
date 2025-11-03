@@ -12,9 +12,13 @@ from dify_plugin.file.file import File
 try:
     import openpyxl
     from reportlab.lib.pagesizes import letter, A4
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
     from reportlab.lib import colors
     from reportlab.lib.units import inch
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
     OPENPYXL_REPORTLAB_AVAILABLE = True
 except ImportError:
     # Fallback for environments without openpyxl and reportlab
@@ -130,6 +134,61 @@ class ExcelToPdfTool(Tool):
         """Validate if the input file format is supported for Excel to PDF conversion."""
         return file_extension.lower() in [".xls", ".xlsx"]
     
+    def _register_chinese_fonts(self):
+        """Register Chinese fonts for PDF generation."""
+        try:
+            # Get the directory of the current script
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            # Get the parent directory (tools) and then the fonts directory
+            fonts_dir = os.path.join(os.path.dirname(current_dir), "fonts")
+            
+            # Common Chinese font paths in Windows and project fonts
+            font_paths = [
+                # Project Chinese font (highest priority)
+                (os.path.join(fonts_dir, "chinese_font.ttc"), "ChineseFont"),
+                # SimSun (宋体)
+                ("C:/Windows/Fonts/simsun.ttc", "SimSun"),
+                ("C:/Windows/Fonts/simsun.ttf", "SimSun"),
+                # SimHei (黑体)
+                ("C:/Windows/Fonts/simhei.ttf", "SimHei"),
+                # SimHei Bold - Note: Windows typically doesn't have a separate SimHei-Bold file
+                # We'll use the same font file for both normal and bold styles
+                ("C:/Windows/Fonts/simhei.ttf", "SimHei-Bold"),
+                # Microsoft YaHei (微软雅黑)
+                ("C:/Windows/Fonts/msyh.ttc", "MicrosoftYaHei"),
+                ("C:/Windows/Fonts/msyh.ttf", "MicrosoftYaHei"),
+                # Microsoft YaHei Bold
+                ("C:/Windows/Fonts/msyhbd.ttc", "MicrosoftYaHei-Bold"),
+                ("C:/Windows/Fonts/msyhbd.ttf", "MicrosoftYaHei-Bold"),
+                # KaiTi (楷体)
+                ("C:/Windows/Fonts/simkai.ttf", "KaiTi"),
+                # FangSong (仿宋)
+                ("C:/Windows/Fonts/simfang.ttf", "FangSong"),
+                # SimSun Bold
+                ("C:/Windows/Fonts/simsunb.ttf", "SimSun-Bold"),
+            ]
+            
+            # Track if any Chinese fonts were successfully registered
+            chinese_fonts_registered = False
+            
+            # Register fonts if they exist
+            for font_path, font_name in font_paths:
+                if os.path.exists(font_path):
+                    try:
+                        pdfmetrics.registerFont(TTFont(font_name, font_path))
+                        chinese_fonts_registered = True
+                    except Exception as e:
+                        # Skip font registration if it fails
+                        continue
+            
+            # If no Chinese fonts were registered, we'll use reportlab's built-in fonts
+            # No need to register Helvetica as it's a built-in font
+            return chinese_fonts_registered
+                
+        except Exception as e:
+            # If font registration fails, we'll use reportlab's built-in fonts
+            return False
+    
     def _process_conversion(self, input_path: str, temp_dir: str) -> Dict[str, Any]:
         """Process the Excel to PDF conversion using openpyxl and reportlab."""
         output_files = []
@@ -137,6 +196,44 @@ class ExcelToPdfTool(Tool):
         try:
             if not OPENPYXL_REPORTLAB_AVAILABLE:
                 return {"success": False, "message": "openpyxl and reportlab libraries are not available for Excel conversion"}
+            
+            # Register Chinese fonts
+            chinese_fonts_available = self._register_chinese_fonts()
+            
+            # Determine which fonts to use based on registration success
+            if chinese_fonts_available:
+                # Try to use Chinese fonts in order of preference
+                try:
+                    # Check if ChineseFont (project font) is available
+                    pdfmetrics.getFont("ChineseFont")
+                    normal_font = 'ChineseFont'
+                    bold_font = 'ChineseFont'  # Use the same font for bold as well
+                except:
+                    try:
+                        # Check if SimSun is available
+                        pdfmetrics.getFont("SimSun")
+                        normal_font = 'SimSun'
+                        bold_font = 'SimSun-Bold'
+                    except:
+                        try:
+                            # Check if Microsoft YaHei is available
+                            pdfmetrics.getFont("MicrosoftYaHei")
+                            normal_font = 'MicrosoftYaHei'
+                            bold_font = 'MicrosoftYaHei-Bold'
+                        except:
+                            try:
+                                # Check if SimHei is available
+                                pdfmetrics.getFont("SimHei")
+                                normal_font = 'SimHei'
+                                bold_font = 'SimHei-Bold'
+                            except:
+                                # Fallback to built-in fonts
+                                normal_font = 'Helvetica'
+                                bold_font = 'Helvetica-Bold'
+            else:
+                # Use reportlab's built-in fonts
+                normal_font = 'Helvetica'
+                bold_font = 'Helvetica-Bold'
             
             # Generate output file path
             base_name = os.path.splitext(os.path.basename(input_path))[0]
@@ -149,6 +246,25 @@ class ExcelToPdfTool(Tool):
             doc = SimpleDocTemplate(output_path, pagesize=A4)
             elements = []
             
+            # Get styles for Chinese text
+            styles = getSampleStyleSheet()
+            chinese_style = ParagraphStyle(
+                'ChineseStyle',
+                parent=styles['Normal'],
+                fontName=normal_font,
+                fontSize=10,
+                leading=14
+            )
+            
+            heading_style = ParagraphStyle(
+                'ChineseHeading',
+                parent=styles['Heading1'],
+                fontName=bold_font,
+                fontSize=14,
+                leading=18,
+                alignment=TA_CENTER
+            )
+            
             # Process each sheet in the workbook
             for sheet_name in workbook.sheetnames:
                 sheet = workbook[sheet_name]
@@ -157,7 +273,20 @@ class ExcelToPdfTool(Tool):
                 data = []
                 for row in sheet.iter_rows(values_only=True):
                     # Convert None to empty string for display
-                    data_row = [cell if cell is not None else "" for cell in row]
+                    data_row = []
+                    for cell in row:
+                        if cell is not None:
+                            # Convert to string and ensure proper encoding for Chinese text
+                            cell_str = str(cell)
+                            # Ensure the string is properly encoded for Chinese characters
+                            if isinstance(cell_str, str):
+                                # No need to encode/decode, just ensure it's a proper string
+                                data_row.append(cell_str)
+                            else:
+                                # Convert to string if it's not already
+                                data_row.append(str(cell_str))
+                        else:
+                            data_row.append("")
                     data.append(data_row)
                 
                 # Create table from data
@@ -179,16 +308,16 @@ class ExcelToPdfTool(Tool):
                     # Create table with style
                     table = Table(data, colWidths=col_widths)
                     
-                    # Add table style
+                    # Add table style with Chinese font support
                     style = TableStyle([
                         ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
                         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTNAME', (0, 0), (-1, 0), bold_font),
                         ('FONTSIZE', (0, 0), (-1, 0), 12),
                         ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
                         ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-                        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                        ('FONTNAME', (0, 1), (-1, -1), normal_font),
                         ('FONTSIZE', (0, 1), (-1, -1), 10),
                         ('GRID', (0, 0), (-1, -1), 1, colors.black),
                         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
@@ -196,12 +325,8 @@ class ExcelToPdfTool(Tool):
                     
                     table.setStyle(style)
                     
-                    # Add sheet name as heading
-                    from reportlab.platypus import Paragraph, Spacer
-                    from reportlab.lib.styles import getSampleStyleSheet
-                    styles = getSampleStyleSheet()
-                    
-                    heading = Paragraph(f"<b>{sheet_name}</b>", styles['Heading1'])
+                    # Add sheet name as heading with Chinese font support
+                    heading = Paragraph(f"<b>{sheet_name}</b>", heading_style)
                     elements.append(heading)
                     elements.append(Spacer(1, 0.2 * inch))
                     
@@ -246,7 +371,7 @@ class ExcelToPdfTool(Tool):
             
             return {
                 "success": True, 
-                "message": "Excel spreadsheet converted to PDF successfully",
+                "message": "Excel spreadsheet converted to PDF successfully with Chinese font support",
                 "output_files": output_files
             }
                 
