@@ -89,7 +89,13 @@ class PptToPdfTool(Tool):
                         try:
                             # Use the pre-read content
                             if "content" in file_info:
-                                yield self.create_blob_message(blob=file_info["content"], meta={"filename": file_info["filename"]})
+                                yield self.create_blob_message(
+                                    blob=file_info["content"], 
+                                    meta={
+                                        "filename": file_info["filename"],
+                                        "mime_type": "application/pdf"
+                                    }
+                                )
                             else:
                                 yield self.create_text_message(f"Error: No content available for file {file_info.get('filename', 'unknown')}")
                         except Exception as e:

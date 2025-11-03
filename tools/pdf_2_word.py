@@ -96,7 +96,13 @@ class PdfToWordTool(Tool):
                     
                     # Send output files
                     for file_path in result["output_files"]:
-                        yield self.create_blob_message(blob=open(file_path, 'rb').read(), meta={"filename": os.path.basename(file_path)})
+                        yield self.create_blob_message(
+                            blob=open(file_path, 'rb').read(), 
+                            meta={
+                                "filename": os.path.basename(file_path),
+                                "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                            }
+                        )
                 else:
                     # Send error message
                     yield self.create_text_message(f"Conversion failed: {result['message']}")

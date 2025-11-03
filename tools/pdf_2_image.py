@@ -1,5 +1,6 @@
 import os
 import tempfile
+import io
 from collections.abc import Generator
 from typing import Any, Dict, Optional
 import json
@@ -10,12 +11,12 @@ from dify_plugin.entities.tool import ToolInvokeMessage
 from dify_plugin.file.file import File
 
 try:
-    from pdf2image import convert_from_path
+    import fitz  # PyMuPDF
     from PIL import Image
-    PDF2IMAGE_AVAILABLE = True
+    PYMUPDF_AVAILABLE = True
 except ImportError:
-    # Fallback for environments without pdf2image
-    PDF2IMAGE_AVAILABLE = False
+    # Fallback for environments without PyMuPDF
+    PYMUPDF_AVAILABLE = False
 
 class PdfToImageTool(Tool):
     """Tool for converting PDF documents to image format."""
@@ -96,7 +97,24 @@ class PdfToImageTool(Tool):
                     
                     # Send output files
                     for file_path in result["output_files"]:
-                        yield self.create_blob_message(blob=open(file_path, 'rb').read(), meta={"filename": os.path.basename(file_path)})
+                        # Determine MIME type based on output format
+                        filename = os.path.basename(file_path)
+                        ext = os.path.splitext(filename)[1].lower()
+                        mime_type = {
+                            '.jpg': 'image/jpeg',
+                            '.jpeg': 'image/jpeg',
+                            '.png': 'image/png',
+                            '.bmp': 'image/bmp',
+                            '.tiff': 'image/tiff'
+                        }.get(ext, 'application/octet-stream')
+                        
+                        yield self.create_blob_message(
+                            blob=open(file_path, 'rb').read(), 
+                            meta={
+                                "filename": filename,
+                                "mime_type": mime_type
+                            }
+                        )
                 else:
                     # Send error message
                     yield self.create_text_message(f"Conversion failed: {result['message']}")
@@ -109,13 +127,13 @@ class PdfToImageTool(Tool):
         return file_extension.lower() == ".pdf"
     
     def _process_conversion(self, file_info: Dict[str, Any], output_format: str, temp_dir: str) -> Dict[str, Any]:
-        """Process the PDF to Image conversion using pdf2image library."""
+        """Process the PDF to Image conversion using PyMuPDF library."""
         input_path = file_info["path"]
         output_files = []
         
         try:
-            if not PDF2IMAGE_AVAILABLE:
-                return {"success": False, "message": "pdf2image library is not available for PDF conversion"}
+            if not PYMUPDF_AVAILABLE:
+                return {"success": False, "message": "PyMuPDF library is not available for PDF conversion"}
             
             # Default to png if not specified
             if not output_format:
@@ -123,37 +141,54 @@ class PdfToImageTool(Tool):
             elif output_format.lower() not in ["jpg", "jpeg", "png", "bmp", "tiff"]:
                 output_format = "png"
             
-            # Set poppler path
-            poppler_path = r"D:\Work\Cursor\file_converter\poppler\poppler-23.07.0\Library\bin"
+            # Open the PDF file
+            pdf_document = fitz.open(input_path)
             
-            # Convert PDF to images using pdf2image
-            # dpi=300 for good quality, fmt=output_format for the desired format
-            images = convert_from_path(input_path, dpi=300, fmt=output_format.lower(), poppler_path=poppler_path)
+            # Get the number of pages
+            page_count = pdf_document.page_count
             
-            if not images:
-                return {"success": False, "message": "No images were generated"}
+            if page_count == 0:
+                return {"success": False, "message": "PDF document has no pages"}
             
-            # Save each image to a file
+            # Process each page
             base_name = os.path.splitext(os.path.basename(input_path))[0]
-            for i, image in enumerate(images):
-                output_filename = f"{base_name}_{i+1:03d}.{output_format.lower()}"
+            for page_num in range(page_count):
+                # Get the page
+                page = pdf_document[page_num]
+                
+                # Set zoom factor for higher quality (300 DPI)
+                zoom = 300 / 72  # 72 is default DPI
+                mat = fitz.Matrix(zoom, zoom)
+                
+                # Render page to an image (pixmap)
+                pix = page.get_pixmap(matrix=mat)
+                
+                # Convert to PIL Image
+                img_data = pix.tobytes("ppm")
+                pil_image = Image.open(io.BytesIO(img_data))
+                
+                # Save the image
+                output_filename = f"{base_name}_{page_num+1:03d}.{output_format.lower()}"
                 output_path = os.path.join(temp_dir, output_filename)
                 
                 # Save the image
                 if output_format.lower() == "jpg" or output_format.lower() == "jpeg":
                     # JPEG doesn't support transparency
-                    if image.mode in ("RGBA", "LA", "P"):
+                    if pil_image.mode in ("RGBA", "LA", "P"):
                         # Convert to RGB mode for JPEG
-                        background = Image.new("RGB", image.size, (255, 255, 255))
-                        if image.mode == "P":
-                            image = image.convert("RGBA")
-                        background.paste(image, mask=image.split()[-1] if image.mode == "RGBA" else None)
-                        image = background
-                    image.save(output_path, "JPEG", quality=95)
+                        background = Image.new("RGB", pil_image.size, (255, 255, 255))
+                        if pil_image.mode == "P":
+                            pil_image = pil_image.convert("RGBA")
+                        background.paste(pil_image, mask=pil_image.split()[-1] if pil_image.mode == "RGBA" else None)
+                        pil_image = background
+                    pil_image.save(output_path, "JPEG", quality=95)
                 else:
-                    image.save(output_path, output_format.upper())
+                    pil_image.save(output_path, output_format.upper())
                 
                 output_files.append(output_path)
+            
+            # Close the PDF document
+            pdf_document.close()
             
             return {
                 "success": True, 

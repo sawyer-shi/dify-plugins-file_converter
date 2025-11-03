@@ -108,7 +108,13 @@ class ExcelToPdfTool(Tool):
                         try:
                             # Use the pre-read content
                             if "content" in output_file_info:
-                                yield self.create_blob_message(blob=output_file_info["content"], meta={"filename": output_file_info["filename"]})
+                                yield self.create_blob_message(
+                                    blob=output_file_info["content"], 
+                                    meta={
+                                        "filename": output_file_info["filename"],
+                                        "mime_type": "application/pdf"
+                                    }
+                                )
                             else:
                                 yield self.create_text_message(f"Error: No content available for file {output_file_info.get('filename', 'unknown')}")
                         except Exception as e:

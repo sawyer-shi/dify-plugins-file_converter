@@ -113,13 +113,19 @@ class WordToPdfTool(Tool):
                     yield self.create_json_message(json_response)
                     
                     # Send output files
-                    for output_file_info in result["output_files"]:
+                    for file_info in result["output_files"]:
                         try:
                             # Use the pre-read content
-                            if "content" in output_file_info:
-                                yield self.create_blob_message(blob=output_file_info["content"], meta={"filename": output_file_info["filename"]})
+                            if "content" in file_info:
+                                yield self.create_blob_message(
+                                    blob=file_info["content"], 
+                                    meta={
+                                        "filename": file_info["filename"],
+                                        "mime_type": "application/pdf"
+                                    }
+                                )
                             else:
-                                yield self.create_text_message(f"Error: No content available for file {output_file_info.get('filename', 'unknown')}")
+                                yield self.create_text_message(f"Error: No content available for file {file_info.get('filename', 'unknown')}")
                         except Exception as e:
                             yield self.create_text_message(f"Error sending file: {str(e)}")
                     
