@@ -6,40 +6,46 @@ import json
 
 from dify_plugin import Tool
 from dify_plugin.entities.tool import ToolInvokeMessage
+from dify_plugin.file.file import File
 
 try:
-    from office import image
+    from PIL import Image
 except ImportError:
-    # Fallback for environments without python-office
-    image = None
+    # Fallback for environments without PIL
+    Image = None
 
 class ImageToPdfTool(Tool):
     """Tool for converting image documents to PDF format."""
     
-    def get_file_info(self, file_id: str) -> Optional[Dict[str, Any]]:
+    def get_file_info(self, file: File) -> dict:
         """
-        Get file information by file ID.
-        This is a mock implementation for testing purposes.
-        In a real Dify environment, this would be provided by the framework.
+        获取文件信息
+        
+        Args:
+            file: 上传的文件对象
+            
+        Returns:
+            dict: 文件信息
         """
-        # In a real implementation, this would query the Dify runtime
-        # For testing, we'll return None to indicate file not found
-        return None
+        return {
+            "filename": file.filename,
+            "extension": file.extension,
+            "mime_type": file.mime_type,
+            "size": file.size,
+            "url": file.url
+        }
     
     def _invoke(self, tool_parameters: dict[str, Any]) -> Generator[ToolInvokeMessage]:
         try:
             # Get parameters
-            input_file = tool_parameters.get("input_file")
+            file = tool_parameters.get("input_file")
             
-            if not input_file:
+            if not file:
                 yield self.create_text_message("Error: Missing required parameter 'input_file'")
                 return
                 
             # Get file info
-            file_info = self.get_file_info(input_file)
-            if not file_info:
-                yield self.create_text_message("Error: Invalid file")
-                return
+            file_info = self.get_file_info(file)
                 
             # Validate input file format
             if not self._validate_input_file(file_info["extension"]):
@@ -48,6 +54,14 @@ class ImageToPdfTool(Tool):
                 
             # Create temporary directory for output
             with tempfile.TemporaryDirectory() as temp_dir:
+                # Save the uploaded file to temp directory
+                input_path = os.path.join(temp_dir, file_info["filename"])
+                with open(input_path, "wb") as f:
+                    f.write(file.blob)
+                
+                # Update file_info with the actual path
+                file_info["path"] = input_path
+                
                 # Process conversion
                 result = self._process_conversion(file_info, temp_dir)
                 
@@ -96,26 +110,18 @@ class ImageToPdfTool(Tool):
         output_files = []
         
         try:
-            if not image:
-                return {"success": False, "message": "python-office library is not available for Image conversion"}
+            if not Image:
+                return {"success": False, "message": "PIL library is not available for Image conversion"}
             
             # Generate output file path
             base_name = os.path.splitext(os.path.basename(input_path))[0]
             output_path = os.path.join(temp_dir, f"{base_name}.pdf")
             
-            # For testing purposes, if the input path doesn't exist, create a dummy PDF file
-            if not os.path.exists(input_path):
-                with open(output_path, 'w') as f:
-                    f.write("This is a dummy PDF file for testing purposes")
-                output_files.append(output_path)
-                return {
-                    "success": True, 
-                    "message": "Image converted to PDF successfully",
-                    "output_files": output_files
-                }
-            
-            # Convert Image to PDF
-            image.img2pdf(input_path, output_path)
+            # Convert Image to PDF using PIL
+            image = Image.open(input_path)
+            if image.mode == 'RGBA':
+                image = image.convert('RGB')
+            image.save(output_path, "PDF", resolution=100.0)
             output_files.append(output_path)
             
             return {

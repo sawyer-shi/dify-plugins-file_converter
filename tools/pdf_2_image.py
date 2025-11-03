@@ -3,44 +3,53 @@ import tempfile
 from collections.abc import Generator
 from typing import Any, Dict, Optional
 import json
+import time
 
 from dify_plugin import Tool
 from dify_plugin.entities.tool import ToolInvokeMessage
+from dify_plugin.file.file import File
 
 try:
-    from office import pdf
+    from pdf2image import convert_from_path
+    from PIL import Image
+    PDF2IMAGE_AVAILABLE = True
 except ImportError:
-    # Fallback for environments without python-office
-    pdf = None
+    # Fallback for environments without pdf2image
+    PDF2IMAGE_AVAILABLE = False
 
 class PdfToImageTool(Tool):
     """Tool for converting PDF documents to image format."""
     
-    def get_file_info(self, file_id: str) -> Optional[Dict[str, Any]]:
+    def get_file_info(self, file: File) -> dict:
         """
-        Get file information by file ID.
-        This is a mock implementation for testing purposes.
-        In a real Dify environment, this would be provided by the framework.
+        获取文件信息
+        
+        Args:
+            file: 上传的文件对象
+            
+        Returns:
+            dict: 文件信息
         """
-        # In a real implementation, this would query the Dify runtime
-        # For testing, we'll return None to indicate file not found
-        return None
+        return {
+            "filename": file.filename,
+            "extension": file.extension,
+            "mime_type": file.mime_type,
+            "size": file.size,
+            "url": file.url
+        }
     
     def _invoke(self, tool_parameters: dict[str, Any]) -> Generator[ToolInvokeMessage]:
         try:
             # Get parameters
-            input_file = tool_parameters.get("input_file")
+            file = tool_parameters.get("input_file")
             output_format = tool_parameters.get("output_format", "png")
             
-            if not input_file:
+            if not file:
                 yield self.create_text_message("Error: Missing required parameter 'input_file'")
                 return
                 
             # Get file info
-            file_info = self.get_file_info(input_file)
-            if not file_info:
-                yield self.create_text_message("Error: Invalid file")
-                return
+            file_info = self.get_file_info(file)
                 
             # Validate input file format
             if not self._validate_input_file(file_info["extension"]):
@@ -49,6 +58,14 @@ class PdfToImageTool(Tool):
                 
             # Create temporary directory for output
             with tempfile.TemporaryDirectory() as temp_dir:
+                # Save the uploaded file to temp directory
+                input_path = os.path.join(temp_dir, file_info["filename"])
+                with open(input_path, "wb") as f:
+                    f.write(file.blob)
+                
+                # Update file_info with the actual path
+                file_info["path"] = input_path
+                
                 # Process conversion
                 result = self._process_conversion(file_info, output_format, temp_dir)
                 
@@ -92,13 +109,13 @@ class PdfToImageTool(Tool):
         return file_extension.lower() == ".pdf"
     
     def _process_conversion(self, file_info: Dict[str, Any], output_format: str, temp_dir: str) -> Dict[str, Any]:
-        """Process the PDF to Image conversion."""
+        """Process the PDF to Image conversion using pdf2image library."""
         input_path = file_info["path"]
         output_files = []
         
         try:
-            if not pdf:
-                return {"success": False, "message": "python-office library is not available for PDF conversion"}
+            if not PDF2IMAGE_AVAILABLE:
+                return {"success": False, "message": "pdf2image library is not available for PDF conversion"}
             
             # Default to png if not specified
             if not output_format:
@@ -106,32 +123,37 @@ class PdfToImageTool(Tool):
             elif output_format.lower() not in ["jpg", "jpeg", "png", "bmp", "tiff"]:
                 output_format = "png"
             
-            # Generate output file path (without extension as python-office will add it)
-            base_name = os.path.splitext(os.path.basename(input_path))[0]
-            output_path = os.path.join(temp_dir, base_name)
+            # Set poppler path
+            poppler_path = r"D:\Work\Cursor\file_converter\poppler\poppler-23.07.0\Library\bin"
             
-            # For testing purposes, if the input path doesn't exist, create a dummy image file
-            if not os.path.exists(input_path):
-                dummy_path = os.path.join(temp_dir, f"{base_name}.{output_format}")
-                with open(dummy_path, 'w') as f:
-                    f.write("This is a dummy image file for testing purposes")
-                output_files.append(dummy_path)
-                return {
-                    "success": True, 
-                    "message": f"PDF converted to {len(output_files)} {output_format} images successfully",
-                    "output_files": output_files
-                }
+            # Convert PDF to images using pdf2image
+            # dpi=300 for good quality, fmt=output_format for the desired format
+            images = convert_from_path(input_path, dpi=300, fmt=output_format.lower(), poppler_path=poppler_path)
             
-            # Convert PDF to images
-            pdf.pdf2img(input_path, output_path, img_type=output_format)
-            
-            # Find all generated image files
-            for file in os.listdir(temp_dir):
-                if file.startswith(base_name) and file.endswith(f".{output_format}"):
-                    output_files.append(os.path.join(temp_dir, file))
-            
-            if not output_files:
+            if not images:
                 return {"success": False, "message": "No images were generated"}
+            
+            # Save each image to a file
+            base_name = os.path.splitext(os.path.basename(input_path))[0]
+            for i, image in enumerate(images):
+                output_filename = f"{base_name}_{i+1:03d}.{output_format.lower()}"
+                output_path = os.path.join(temp_dir, output_filename)
+                
+                # Save the image
+                if output_format.lower() == "jpg" or output_format.lower() == "jpeg":
+                    # JPEG doesn't support transparency
+                    if image.mode in ("RGBA", "LA", "P"):
+                        # Convert to RGB mode for JPEG
+                        background = Image.new("RGB", image.size, (255, 255, 255))
+                        if image.mode == "P":
+                            image = image.convert("RGBA")
+                        background.paste(image, mask=image.split()[-1] if image.mode == "RGBA" else None)
+                        image = background
+                    image.save(output_path, "JPEG", quality=95)
+                else:
+                    image.save(output_path, output_format.upper())
+                
+                output_files.append(output_path)
             
             return {
                 "success": True, 
