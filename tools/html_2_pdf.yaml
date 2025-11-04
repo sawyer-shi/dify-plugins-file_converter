@@ -1,0 +1,26 @@
+identity:
+  name: "html_2_pdf"
+  author: "sawyer-shi"
+  label:
+    en_US: "HTML to PDF Converter"
+    zh_Hans: "HTML转PDF转换器"
+description:
+  human:
+    en_US: "Convert HTML documents to PDF format (.pdf)."
+    zh_Hans: "将HTML文档转换为PDF格式（.pdf）。"
+  llm: "A tool that converts HTML documents to PDF format (.pdf) using pdfkit library."
+parameters:
+  - name: input_file
+    type: file
+    required: true
+    label:
+      en_US: HTML Document
+      zh_Hans: HTML文档
+    human_description:
+      en_US: "Select the HTML document you want to convert to PDF."
+      zh_Hans: "选择您想要转换为PDF的HTML文档。"
+    llm_description: "The HTML document file to be converted to PDF"
+    form: form
+extra:
+  python:
+    source: tools/html_2_pdf.py

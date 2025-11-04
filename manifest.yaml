@@ -9,8 +9,8 @@ label:
   en_US: File Converter
   zh_Hans: 文件转换器
 description:
-  en_US: 'Local File Converter: Supports PDF2Image, Image2PDF, Word2PDF, PDF2Word, PPT2PDF, Excel2PDF, Word2Text, Text2Word, Text2PDF, and PDF2Text.'
-  zh_Hans: '本地文件转换器：支持PDF转图片、图片转PDF、Word转PDF‌、PDF转Word‌、PPT转PDF‌、Excel转PDF、Word转文本、文本转Word、文本转PDF、PDF转文本。'
+  en_US: 'Local File Converter: Supports PDF2Image, Image2PDF, Word2PDF, PDF2Word, PPT2PDF, Excel2PDF, HTML2Word, and HTML2PDF, Word2Text, Text2Word, Text2PDF, PDF2Text.'
+  zh_Hans: '本地文件转换器：支持PDF转图片、图片转PDF、Word转PDF‌、PDF转Word‌、PPT转PDF‌、Excel转PDF、HTML转Word、HTML转PDF、Word转文本、文本转Word、文本转PDF、PDF转文本。'
 icon: icon.png
 resource:
   memory: 104857600

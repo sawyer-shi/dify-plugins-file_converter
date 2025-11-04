@@ -14,3 +14,8 @@ poppler-utils>=0.1.0
 # Additional dependencies for PPT to PDF conversion
 python-pptx>=0.6.21
 # spire-doc>=10.8.0  # Replaced with python-docx
+# Dependencies for HTML conversion
+beautifulsoup4>=4.9.0
+docxtpl>=0.3.0
+lxml>=4.6.0
+weasyprint>=60.0
