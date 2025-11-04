@@ -1,0 +1,27 @@
+identity:
+  name: "pdf_2_text"
+  author: "sawyer-shi"
+  label:
+    en_US: "PDF to Text Converter"
+    zh_Hans: "PDF转文本转换器"
+description:
+  human:
+    en_US: "Convert PDF documents to plain text format (.txt)."
+    zh_Hans: "将PDF文档转换为纯文本格式（.txt）。"
+  llm: "A tool that converts PDF documents to plain text format (.txt) using PyMuPDF or pdfplumber library."
+parameters:
+  - name: input_file
+    type: file
+    required: true
+    label:
+      en_US: Input PDF File
+      zh_Hans: 输入PDF文件
+      pt_BR: Arquivo PDF de Entrada
+    human_description:
+      en_US: Upload the PDF file you want to convert to text
+      zh_Hans: 上传您想要转换为文本的PDF文件
+      pt_BR: Carregue o arquivo PDF que você deseja converter para texto
+    form: llm
+extra:
+  python:
+    source: tools/pdf_2_text.py

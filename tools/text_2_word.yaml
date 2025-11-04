@@ -1,0 +1,45 @@
+identity:
+  name: "text_2_word"
+  author: "sawyer-shi"
+  label:
+    en_US: "Text to Word Converter"
+    zh_Hans: "文本转Word转换器"
+description:
+  human:
+    en_US: "Convert plain text files (.txt) to Word document format (.doc or .docx)."
+    zh_Hans: "将纯文本文件（.txt）转换为Word文档格式（.doc或.docx）。"
+  llm: "A tool that converts plain text files (.txt) to Word document format (.doc or .docx) using python-docx library."
+parameters:
+  - name: input_file
+    type: file
+    required: true
+    label:
+      en_US: Input Text File
+      zh_Hans: 输入文本文件
+    human_description:
+      en_US: Upload a text file (.txt) to convert to Word document
+      zh_Hans: 上传一个文本文件(.txt)以转换为Word文档
+    form: llm
+  - name: output_format
+    type: select
+    required: false
+    default: docx
+    options:
+      - value: docx
+        label:
+          en_US: DOCX (Office 2007+)
+          zh_Hans: DOCX (Office 2007+)
+      - value: doc
+        label:
+          en_US: DOC (Office 97-2003)
+          zh_Hans: DOC (Office 97-2003)
+    label:
+      en_US: Output Format
+      zh_Hans: 输出格式
+    human_description:
+      en_US: Choose the output format for the Word document
+      zh_Hans: 选择Word文档的输出格式
+    form: form
+extra:
+  python:
+    source: tools/text_2_word.py

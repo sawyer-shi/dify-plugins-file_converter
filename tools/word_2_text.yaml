@@ -1,0 +1,25 @@
+identity:
+  name: "word_2_text"
+  author: "sawyer-shi"
+  label:
+    en_US: "Word to Text Converter"
+    zh_Hans: "Word转文本转换器"
+description:
+  human:
+    en_US: "Convert Word documents (.doc, .docx) to plain text format (.txt)."
+    zh_Hans: "将Word文档（.doc, .docx）转换为纯文本格式（.txt）。"
+  llm: "A tool that converts Word documents (.doc, .docx) to plain text format (.txt) using python-docx library."
+parameters:
+  - name: input_file
+    type: file
+    required: true
+    label:
+      en_US: Input Word File
+      zh_Hans: 输入Word文件
+    human_description:
+      en_US: Upload a Word document (.doc or .docx) to convert to text
+      zh_Hans: 上传一个Word文档(.doc或.docx)以转换为文本
+    form: llm
+extra:
+  python:
+    source: tools/word_2_text.py

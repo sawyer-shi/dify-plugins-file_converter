@@ -1,0 +1,25 @@
+identity:
+  name: "text_2_pdf"
+  author: "sawyer-shi"
+  label:
+    en_US: "Text to PDF Converter"
+    zh_Hans: "文本转PDF转换器"
+description:
+  human:
+    en_US: "Convert plain text files (.txt) to PDF format (.pdf)."
+    zh_Hans: "将纯文本文件（.txt）转换为PDF格式（.pdf）。"
+  llm: "A tool that converts plain text files (.txt) to PDF format (.pdf) using reportlab library with Chinese font support."
+parameters:
+  - name: input_file
+    type: file
+    required: true
+    label:
+      en_US: Input Text File
+      zh_Hans: 输入文本文件
+    human_description:
+      en_US: Upload a text file (.txt) to convert to PDF
+      zh_Hans: 上传一个文本文件(.txt)以转换为PDF
+    form: llm
+extra:
+  python:
+    source: tools/text_2_pdf.py
