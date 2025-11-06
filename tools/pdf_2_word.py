@@ -111,52 +111,200 @@ class PdfToWordTool(Tool):
             yield self.create_text_message(f"Error during conversion: {str(e)}")
     
     def _format_table(self, word_table, table_data):
-        """Format the Word table with proper styling and preserve headers."""
-        from docx.shared import Pt
-        from docx.enum.table import WD_TABLE_ALIGNMENT
+        """
+        Format the Word table with proper styling and preserve headers.
+        改进：更简洁的格式，避免过度装饰
+        """
+        from docx.shared import Pt, Inches
+        from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
         from docx.enum.text import WD_ALIGN_PARAGRAPH
         from docx.oxml.ns import nsmap
+        from docx.oxml import OxmlElement
         
         # Fill the table with data and apply formatting
         for row_idx, row in enumerate(table_data):
             for col_idx, cell_data in enumerate(row):
+                cell = word_table.cell(row_idx, col_idx)
+                
+                # 清空默认内容
+                cell.text = ""
+                
+                # 添加内容
                 if cell_data is not None and str(cell_data).strip():
-                    cell = word_table.cell(row_idx, col_idx)
-                    cell.text = str(cell_data)
+                    p = cell.paragraphs[0]
+                    run = p.add_run(str(cell_data))
+                    
+                    # 设置字体大小
+                    run.font.size = Pt(10)
                     
                     # Format header row (first row) differently
                     if row_idx == 0:
                         # Make header text bold
-                        for paragraph in cell.paragraphs:
-                            for run in paragraph.runs:
-                                run.font.bold = True
-                            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        run.font.bold = True
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                         
-                        # Set header row background to light gray
+                        # Set header row background to light blue (更接近PDF样式)
                         try:
-                            shading = cell._element.xpath('.//w:shd')[0]
-                            shading.set('{%s}fill' % nsmap['w'], 'D9D9D9')
-                        except:
-                            pass  # Skip if shading fails
+                            shading_elm = OxmlElement('w:shd')
+                            shading_elm.set('{%s}val' % nsmap['w'], 'clear')
+                            shading_elm.set('{%s}color' % nsmap['w'], 'auto')
+                            shading_elm.set('{%s}fill' % nsmap['w'], 'D0E4F7')  # 淡蓝色
+                            cell._element.get_or_add_tcPr().append(shading_elm)
+                        except Exception as e:
+                            print(f"Warning: Failed to apply cell shading: {e}")
                     else:
                         # Align content to left for data rows
-                        for paragraph in cell.paragraphs:
-                            paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                    
+                    # 设置单元格垂直居中
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
         
-        # Set table alignment
-        word_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        # Set table alignment to left (更自然)
+        word_table.alignment = WD_TABLE_ALIGNMENT.LEFT
         
-        # Set column widths to be more proportional
-        for row in word_table.rows:
-            for cell in row.cells:
-                cell.width = Inches(1.5)  # Set a reasonable default width
+        # 设置表格自动调整
+        word_table.autofit = True
+        
+        # 设置表格样式为网格线
+        try:
+            word_table.style = 'Table Grid'
+        except:
+            pass
     
     def _validate_input_file(self, file_extension: str) -> bool:
         """Validate if the input file format is supported for PDF to Word conversion."""
         return file_extension.lower() == ".pdf"
     
+    def _get_elements_with_position(self, page, pdf_document):
+        """
+        获取页面所有元素及其位置，按照从上到下的顺序排列
+        返回: [(y_position, element_type, element_data), ...]
+        """
+        elements = []
+        
+        # 1. 获取文本块及其位置
+        try:
+            text_dict = page.get_text("dict")
+            blocks = text_dict.get("blocks", [])
+            
+            for block in blocks:
+                if "lines" in block:
+                    # 文本块
+                    bbox = block.get("bbox", (0, 0, 0, 0))
+                    y_position = bbox[1]  # top y coordinate
+                    x_position = bbox[0]  # left x coordinate (用于检测缩进)
+                    
+                    # 提取文本内容和格式
+                    block_text = ""
+                    font_size = 12  # 默认字体大小
+                    is_bold = False
+                    color = None  # RGB颜色
+                    
+                    for line in block["lines"]:
+                        line_text = ""
+                        for span in line.get("spans", []):
+                            line_text += span.get("text", "")
+                            # 获取字体信息
+                            if "size" in span:
+                                font_size = span["size"]
+                            if "flags" in span:
+                                # flags & 16 表示粗体
+                                is_bold = (span["flags"] & 16) != 0
+                            # 获取颜色信息 (RGB格式)
+                            if "color" in span:
+                                color = span["color"]
+                        block_text += line_text + "\n"
+                    
+                    if block_text.strip():
+                        elements.append((
+                            y_position,
+                            "text",
+                            {
+                                "text": block_text.strip(),
+                                "font_size": font_size,
+                                "is_bold": is_bold,
+                                "color": color,
+                                "x_position": x_position,
+                                "bbox": bbox
+                            }
+                        ))
+        except Exception as e:
+            print(f"Warning: Failed to extract text blocks: {e}")
+        
+        # 2. 获取表格及其位置
+        try:
+            tables = page.find_tables()
+            if tables.tables:
+                for table in tables.tables:
+                    try:
+                        bbox = table.bbox
+                        y_position = bbox[1]  # top y coordinate
+                        table_data = table.extract()
+                        
+                        if table_data and len(table_data) > 0:
+                            elements.append((
+                                y_position,
+                                "table",
+                                {
+                                    "data": table_data,
+                                    "bbox": bbox
+                                }
+                            ))
+                    except Exception as e:
+                        print(f"Warning: Failed to extract table: {e}")
+                        continue
+        except Exception as e:
+            print(f"Warning: Failed to find tables: {e}")
+        
+        # 3. 获取图片及其位置
+        try:
+            image_list = page.get_images()
+            for img_index, img in enumerate(image_list):
+                try:
+                    # 获取图片位置
+                    xref = img[0]
+                    # 获取图片在页面上的位置
+                    img_rects = page.get_image_rects(xref)
+                    
+                    if img_rects:
+                        bbox = img_rects[0]
+                        y_position = bbox[1]  # top y coordinate
+                        
+                        # 获取图片数据
+                        pix = fitz.Pixmap(pdf_document, xref)
+                        
+                        # Skip CMYK images
+                        if pix.n - pix.alpha < 4:
+                            img_data = pix.tobytes("png")
+                            
+                            elements.append((
+                                y_position,
+                                "image",
+                                {
+                                    "data": img_data,
+                                    "bbox": bbox,
+                                    "width": pix.width,
+                                    "height": pix.height
+                                }
+                            ))
+                        
+                        pix = None
+                except Exception as e:
+                    print(f"Warning: Failed to extract image {img_index}: {e}")
+                    continue
+        except Exception as e:
+            print(f"Warning: Failed to get images: {e}")
+        
+        # 按照y坐标排序（从上到下）
+        elements.sort(key=lambda x: x[0])
+        
+        return elements
+    
     def _process_conversion(self, file_info: Dict[str, Any], output_format: str, temp_dir: str) -> Dict[str, Any]:
-        """Process the PDF to Word conversion using PyMuPDF library."""
+        """
+        Process the PDF to Word conversion using PyMuPDF library.
+        关键改进：按照PDF的实际布局顺序（从上到下）处理内容，不添加额外内容
+        """
         input_path = file_info["path"]
         output_files = []
         
@@ -187,86 +335,98 @@ class PdfToWordTool(Tool):
             for page_num in range(len(pdf_document)):
                 page = pdf_document.load_page(page_num)
                 
-                # Add page heading
-                doc.add_heading(f'Page {page_num + 1}', level=2)
+                # 获取页面所有元素并按位置排序
+                elements = self._get_elements_with_position(page, pdf_document)
                 
-                # Extract tables first
-                tables = page.find_tables()
-                if tables.tables:
-                    for table_idx, table in enumerate(tables.tables):
-                        try:
-                            # Extract table data with bbox information
-                            table_data = table.extract()
-                            
-                            # Create a table in Word document
-                            if table_data and len(table_data) > 0:
-                                # Determine the number of columns based on the first row
-                                cols = len(table_data[0])
-                                word_table = doc.add_table(rows=len(table_data), cols=cols)
-                                word_table.style = 'Table Grid'
-                                
-                                # Apply formatting to the table
-                                self._format_table(word_table, table_data)
-                                
-                                # Add a paragraph after the table
-                                doc.add_paragraph(f"Table {table_idx + 1} from Page {page_num + 1}")
-                                doc.add_paragraph()  # Add empty paragraph for spacing
-                        except Exception as e:
-                            # If table extraction fails, add a note
-                            doc.add_paragraph(f"Note: Could not extract table {table_idx + 1} from Page {page_num + 1}: {str(e)}")
-                            continue
-                
-                # Extract text (excluding tables)
-                try:
-                    # Get text blocks
-                    text_dict = page.get_text("dict")
-                    blocks = text_dict.get("blocks", [])
-                    
-                    page_text = ""
-                    for block in blocks:
-                        if "lines" in block:
-                            for line in block["lines"]:
-                                line_text = ""
-                                for span in line.get("spans", []):
-                                    line_text += span.get("text", "")
-                                page_text += line_text + "\n"
-                    
-                    if page_text.strip():
-                        doc.add_paragraph(page_text)
-                except Exception as e:
-                    # Fallback to simple text extraction if dict method fails
-                    text = page.get_text()
-                    if text.strip():
-                        doc.add_paragraph(text)
-                
-                # Extract images
-                image_list = page.get_images()
-                for img_index, img in enumerate(image_list):
-                    try:
-                        # Get image data
-                        xref = img[0]
-                        pix = fitz.Pixmap(pdf_document, xref)
+                # 按顺序处理每个元素
+                for y_pos, element_type, element_data in elements:
+                    if element_type == "text":
+                        # 添加文本段落
+                        from docx.shared import Pt, RGBColor, Inches
+                        from docx.enum.text import WD_ALIGN_PARAGRAPH
                         
-                        # Skip CMYK images (not supported by python-docx)
-                        if pix.n - pix.alpha < 4:
-                            # Convert pixmap to bytes
-                            img_data = pix.tobytes("png")
-                            
-                            # Create a temporary file to store the image
-                            img_stream = io.BytesIO(img_data)
-                            
-                            # Add image to Word document
-                            doc.add_picture(img_stream, width=Inches(6))
-                            doc.add_paragraph(f"Image {img_index + 1} from Page {page_num + 1}")
+                        text = element_data["text"]
+                        font_size = element_data["font_size"]
+                        is_bold = element_data["is_bold"]
+                        color = element_data.get("color")
+                        x_position = element_data.get("x_position", 0)
                         
-                        # Clean up
-                        pix = None
-                    except Exception as e:
-                        # Log error but continue processing
-                        print(f"Error processing image {img_index} on page {page_num + 1}: {str(e)}")
-                        continue
+                        # 判断是否为标题（根据字体大小）
+                        if font_size >= 16:
+                            # 大字体，作为一级标题
+                            heading = doc.add_heading(text, level=1)
+                            # 应用颜色到标题
+                            if color is not None:
+                                for run in heading.runs:
+                                    # PDF颜色是整数，需要转换为RGB
+                                    r = (color >> 16) & 0xFF
+                                    g = (color >> 8) & 0xFF
+                                    b = color & 0xFF
+                                    run.font.color.rgb = RGBColor(r, g, b)
+                        elif font_size >= 14:
+                            # 中等字体，作为二级标题
+                            heading = doc.add_heading(text, level=2)
+                            # 应用颜色到标题
+                            if color is not None:
+                                for run in heading.runs:
+                                    r = (color >> 16) & 0xFF
+                                    g = (color >> 8) & 0xFF
+                                    b = color & 0xFF
+                                    run.font.color.rgb = RGBColor(r, g, b)
+                        else:
+                            # 普通文本
+                            p = doc.add_paragraph(text)
+                            
+                            # 设置缩进（根据x坐标）
+                            # 页面左边距通常是72点（1英寸），大于这个值说明有缩进
+                            if x_position > 80:  # 有明显缩进
+                                indent_inches = (x_position - 72) / 72.0  # 转换为英寸
+                                p.paragraph_format.left_indent = Inches(min(indent_inches, 2.0))  # 限制最大缩进
+                            
+                            # 应用格式到run
+                            for run in p.runs:
+                                if is_bold:
+                                    run.bold = True
+                                # 应用颜色
+                                if color is not None:
+                                    r = (color >> 16) & 0xFF
+                                    g = (color >> 8) & 0xFF
+                                    b = color & 0xFF
+                                    run.font.color.rgb = RGBColor(r, g, b)
+                                # 设置字体大小
+                                run.font.size = Pt(max(font_size, 9))  # 最小9pt
+                    
+                    elif element_type == "table":
+                        # 添加表格
+                        table_data = element_data["data"]
+                        
+                        if table_data and len(table_data) > 0:
+                            cols = len(table_data[0])
+                            word_table = doc.add_table(rows=len(table_data), cols=cols)
+                            word_table.style = 'Table Grid'
+                            
+                            # 填充表格数据（不添加额外说明）
+                            self._format_table(word_table, table_data)
+                    
+                    elif element_type == "image":
+                        # 添加图片
+                        img_data = element_data["data"]
+                        img_stream = io.BytesIO(img_data)
+                        
+                        # 根据原始尺寸计算合适的显示宽度
+                        width = element_data["width"]
+                        height = element_data["height"]
+                        
+                        # 限制最大宽度为6英寸
+                        max_width = 6.0
+                        if width > height:
+                            doc_width = min(max_width, width / 100.0)  # 简单的缩放
+                        else:
+                            doc_width = min(4.0, width / 100.0)
+                        
+                        doc.add_picture(img_stream, width=Inches(doc_width))
                 
-                # Add page break except for the last page
+                # 在页面之间添加分页符（除了最后一页）
                 if page_num < len(pdf_document) - 1:
                     doc.add_page_break()
             
@@ -287,7 +447,7 @@ class PdfToWordTool(Tool):
             
             return {
                 "success": True, 
-                "message": f"PDF converted to Word ({output_format}) successfully using PyMuPDF",
+                "message": f"PDF converted to Word ({output_format}) successfully - preserving original layout order",
                 "output_files": output_files
             }
                 
