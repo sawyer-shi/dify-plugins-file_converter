@@ -308,6 +308,53 @@ class WordToPdfTool(Tool):
         else:
             return TA_LEFT
     
+    def _get_paragraph_numbering(self, paragraph):
+        """
+        获取段落的编号信息（如果有的话）
+        
+        Args:
+            paragraph: python-docx的Paragraph对象
+            
+        Returns:
+            编号文本（如"1. "、"一、"等），如果没有编号则返回空字符串
+        """
+        try:
+            # 检查段落是否有编号
+            if paragraph._element.pPr is None:
+                return ""
+            
+            numPr = paragraph._element.pPr.numPr
+            if numPr is None:
+                return ""
+            
+            # 获取编号级别
+            ilvl = numPr.ilvl
+            if ilvl is None:
+                level = 0
+            else:
+                level = ilvl.val
+            
+            # 获取编号ID
+            numId = numPr.numId
+            if numId is None:
+                return ""
+            
+            # 根据级别添加缩进
+            indent = "  " * level
+            
+            # 尝试从段落文本中提取编号
+            # Word文档中的编号通常会显示在文本开头
+            # 但通过python-docx的paragraph.text获取时可能不包含编号
+            # 所以我们需要通过其他方式检测
+            
+            # 简单处理：如果段落有编号属性，添加一个占位符
+            # 因为无法直接从python-docx获取编号的实际文本
+            # 我们返回一个标记，后续在文本处理时检测
+            return ""  # 暂时返回空，因为编号信息难以精确提取
+            
+        except Exception as e:
+            return ""
+    
     def _process_conversion(self, input_path: str, temp_dir: str) -> Dict[str, Any]:
         """
         使用python-docx和reportlab进行Word到PDF的转换
@@ -465,8 +512,15 @@ class WordToPdfTool(Tool):
             # 按顺序处理文档中的所有块级元素（段落和表格）
             for block in self._iter_block_items(doc):
                 if isinstance(block, Paragraph):
-                    # 处理段落
-                    text = block.text.strip()
+                    # 处理段落 - 更精细地提取文本，保留所有字符
+                    # 使用paragraph.text会自动过滤一些内容，我们需要更精确的提取
+                    text_parts = []
+                    for run in block.runs:
+                        if run.text:
+                            text_parts.append(run.text)
+                    
+                    # 合并所有run的文本
+                    text = ''.join(text_parts).strip()
                     has_image = False
                     
                     # 先检查段落中是否有图片（即使没有文字也要检查！）
@@ -557,45 +611,87 @@ class WordToPdfTool(Tool):
                 elif isinstance(block, Table):
                     # 处理表格
                     try:
-                        # Convert table data to list of lists
+                        # 获取表格的列数
+                        if not block.rows:
+                            continue
+                        
+                        num_cols = len(block.rows[0].cells)
+                        
+                        # 创建用于表格单元格的样式（左对齐，自动换行）
+                        cell_style = ParagraphStyle(
+                            'TableCell',
+                            parent=normal_style,
+                            fontSize=9,
+                            leading=12,
+                            wordWrap='CJK',
+                            alignment=TA_LEFT,  # 左对齐
+                            leftIndent=0,
+                            rightIndent=0
+                        )
+                        
+                        # 转换表格数据为Paragraph对象列表，支持自动换行
                         table_data = []
-                        for row in block.rows:
+                        for row_idx, row in enumerate(block.rows):
                             row_data = []
                             for cell in row.cells:
                                 cell_text = cell.text.strip()
                                 # Handle empty cells
                                 if not cell_text:
                                     cell_text = " "
-                                row_data.append(cell_text)
+                                
+                                # 使用Paragraph包装文本，支持自动换行和中文显示
+                                try:
+                                    para = RLParagraph(cell_text, cell_style)
+                                    row_data.append(para)
+                                except Exception as e:
+                                    # 如果Paragraph创建失败，使用纯文本
+                                    row_data.append(cell_text)
+                            
                             table_data.append(row_data)
                         
                         if table_data:
                             try:
-                                # 创建表格，让reportlab自动计算列宽
-                                pdf_table = RLTable(table_data, repeatRows=1)
+                                # 计算可用宽度（A4纸宽度 - 左右边距）
+                                page_width = A4[0]
+                                available_width = page_width - 100  # 减去左右边距
+                                
+                                # 根据列数平均分配列宽
+                                col_width = available_width / num_cols
+                                col_widths = [col_width] * num_cols
+                                
+                                # 创建表格，指定列宽
+                                pdf_table = RLTable(
+                                    table_data, 
+                                    colWidths=col_widths,
+                                    repeatRows=1
+                                )
                                 
                                 # Add table style with better formatting
                                 table_style = TableStyle([
                                     # 表头样式
                                     ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4472C4')),
                                     ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                                    ('ALIGN', (0, 0), (-1, 0), 'LEFT'),  # 表头也左对齐
+                                    ('VALIGN', (0, 0), (-1, -1), 'TOP'),  # 顶部对齐
                                     ('FONTNAME', (0, 0), (-1, 0), bold_font),
-                                    ('FONTSIZE', (0, 0), (-1, 0), 11),
-                                    ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
-                                    ('TOPPADDING', (0, 0), (-1, 0), 10),
+                                    ('FONTSIZE', (0, 0), (-1, 0), 10),
+                                    ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                                    ('TOPPADDING', (0, 0), (-1, 0), 8),
                                     # 数据行样式
                                     ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+                                    ('ALIGN', (0, 1), (-1, -1), 'LEFT'),  # 左对齐
+                                    ('VALIGN', (0, 1), (-1, -1), 'TOP'),  # 顶部对齐
                                     ('FONTNAME', (0, 1), (-1, -1), normal_font),
-                                    ('FONTSIZE', (0, 1), (-1, -1), 10),
-                                    ('TOPPADDING', (0, 1), (-1, -1), 6),
-                                    ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
-                                    ('LEFTPADDING', (0, 0), (-1, -1), 8),
-                                    ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+                                    ('FONTSIZE', (0, 1), (-1, -1), 9),
+                                    ('TOPPADDING', (0, 1), (-1, -1), 5),
+                                    ('BOTTOMPADDING', (0, 1), (-1, -1), 5),
+                                    ('LEFTPADDING', (0, 0), (-1, -1), 6),
+                                    ('RIGHTPADDING', (0, 0), (-1, -1), 6),
                                     # 边框
                                     ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
                                     ('LINEBELOW', (0, 0), (-1, 0), 2, colors.HexColor('#4472C4')),
+                                    # 自动换行
+                                    ('WORDWRAP', (0, 0), (-1, -1), True),
                                 ])
                                 
                                 pdf_table.setStyle(table_style)
@@ -606,7 +702,16 @@ class WordToPdfTool(Tool):
                                 # Fallback for table styling - 使用简单样式
                                 print(f"Warning: Failed to apply table style, using simple style: {e}")
                                 try:
-                                    pdf_table = RLTable(table_data)
+                                    # 简化版：使用纯文本，平均列宽
+                                    simple_data = []
+                                    for row in block.rows:
+                                        row_data = []
+                                        for cell in row.cells:
+                                            cell_text = cell.text.strip() if cell.text.strip() else " "
+                                            row_data.append(cell_text)
+                                        simple_data.append(row_data)
+                                    
+                                    pdf_table = RLTable(simple_data, colWidths=col_widths)
                                     story.append(Spacer(1, 8))
                                     story.append(pdf_table)
                                     story.append(Spacer(1, 12))
