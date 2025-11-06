@@ -12,13 +12,18 @@ from dify_plugin.file.file import File
 # Try to import python-docx and reportlab components for Word to PDF conversion
 try:
     from docx import Document
+    from docx.oxml.text.paragraph import CT_P
+    from docx.oxml.table import CT_Tbl
+    from docx.table import _Cell, Table
+    from docx.text.paragraph import Paragraph
     from reportlab.pdfgen import canvas
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.utils import ImageReader as RLImage
-    from reportlab.platypus import Table, TableStyle, Paragraph, Spacer, SimpleDocTemplate
+    from reportlab.platypus import Table as RLTable, TableStyle, Paragraph as RLParagraph, Spacer, SimpleDocTemplate, Image as RLImage2, PageBreak
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib import colors
     from reportlab.lib.units import inch
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
     import io
     DOCX_REPORTLAB_AVAILABLE = True
 except ImportError:
@@ -257,8 +262,57 @@ class WordToPdfTool(Tool):
         # If python-docx is not available or path not available, just check file extension
         return True
     
+    def _iter_block_items(self, parent):
+        """
+        按照文档中的实际顺序生成段落和表格对象
+        这是关键函数，保证了图文混排的顺序不会被打乱
+        
+        Args:
+            parent: Document对象或其他包含块级元素的对象
+            
+        Yields:
+            Paragraph或Table对象，按照文档中的实际顺序
+        """
+        if hasattr(parent, 'element'):
+            parent_elm = parent.element.body
+        else:
+            parent_elm = parent
+            
+        for child in parent_elm.iterchildren():
+            if isinstance(child, CT_P):
+                # 段落元素
+                yield Paragraph(child, parent)
+            elif isinstance(child, CT_Tbl):
+                # 表格元素
+                yield Table(child, parent)
+    
+    def _get_paragraph_alignment(self, paragraph):
+        """
+        获取段落的对齐方式
+        
+        Args:
+            paragraph: python-docx的Paragraph对象
+            
+        Returns:
+            reportlab的对齐常量
+        """
+        alignment = paragraph.alignment
+        if alignment is None:
+            return TA_LEFT
+        elif alignment == 1:  # CENTER
+            return TA_CENTER
+        elif alignment == 2:  # RIGHT
+            return TA_RIGHT
+        elif alignment == 3:  # JUSTIFY
+            return TA_JUSTIFY
+        else:
+            return TA_LEFT
+    
     def _process_conversion(self, input_path: str, temp_dir: str) -> Dict[str, Any]:
-        """Process the Word to PDF conversion using python-docx and reportlab."""
+        """
+        使用python-docx和reportlab进行Word到PDF的转换
+        关键改进：按照文档的实际顺序处理内容，保持图文混排
+        """
         output_files = []
         
         # Generate output file path
@@ -276,14 +330,14 @@ class WordToPdfTool(Tool):
             # Load the Word document
             doc = Document(input_path)
             
-            # Create PDF document
+            # Create PDF document with more appropriate margins
             pdf_doc = SimpleDocTemplate(
                 output_path,
                 pagesize=A4,
-                rightMargin=72,
-                leftMargin=72,
-                topMargin=72,
-                bottomMargin=18
+                rightMargin=50,
+                leftMargin=50,
+                topMargin=50,
+                bottomMargin=30
             )
             
             # Get styles
@@ -318,124 +372,251 @@ class WordToPdfTool(Tool):
                 normal_font = 'Helvetica'
                 bold_font = 'Helvetica-Bold'
             
-            # Create custom styles for Chinese text
+            # Create custom styles for Chinese text with various sizes
             try:
+                # 正文样式
                 normal_style = ParagraphStyle(
                     'CustomNormal',
                     parent=styles['Normal'],
                     fontName=normal_font,
-                    fontSize=10,
-                    leading=14,
-                    spaceAfter=6,
-                    wordWrap='CJK'
+                    fontSize=11,
+                    leading=16,
+                    spaceAfter=8,
+                    wordWrap='CJK',
+                    alignment=TA_LEFT
                 )
                 
-                heading_style = ParagraphStyle(
-                    'CustomHeading',
+                # 标题样式
+                heading1_style = ParagraphStyle(
+                    'CustomHeading1',
                     parent=styles['Heading1'],
+                    fontName=bold_font,
+                    fontSize=18,
+                    leading=22,
+                    spaceAfter=12,
+                    spaceBefore=12,
+                    wordWrap='CJK',
+                    alignment=TA_LEFT
+                )
+                
+                heading2_style = ParagraphStyle(
+                    'CustomHeading2',
+                    parent=styles['Heading2'],
+                    fontName=bold_font,
+                    fontSize=16,
+                    leading=20,
+                    spaceAfter=10,
+                    spaceBefore=10,
+                    wordWrap='CJK',
+                    alignment=TA_LEFT
+                )
+                
+                heading3_style = ParagraphStyle(
+                    'CustomHeading3',
+                    parent=styles['Heading3'],
                     fontName=bold_font,
                     fontSize=14,
                     leading=18,
-                    spaceAfter=12,
-                    wordWrap='CJK'
+                    spaceAfter=8,
+                    spaceBefore=8,
+                    wordWrap='CJK',
+                    alignment=TA_LEFT
                 )
+                
+                # 居中样式
+                center_style = ParagraphStyle(
+                    'CustomCenter',
+                    parent=normal_style,
+                    alignment=TA_CENTER
+                )
+                
+                # 右对齐样式
+                right_style = ParagraphStyle(
+                    'CustomRight',
+                    parent=normal_style,
+                    alignment=TA_RIGHT
+                )
+                
             except Exception:
                 # Fallback to default styles if custom styles fail
                 normal_style = styles['Normal']
-                heading_style = styles['Heading1']
+                heading1_style = styles['Heading1']
+                heading2_style = styles['Heading2']
+                heading3_style = styles['Heading3']
+                center_style = styles['Normal']
+                right_style = styles['Normal']
             
-            # Build PDF content
+            # Build PDF content - 关键：按文档顺序处理
             story = []
             
-            # Process paragraphs
-            for para in doc.paragraphs:
-                text = para.text.strip()
-                if text:
-                    try:
-                        # Try to determine if this is a heading
-                        if para.style.name.startswith('Heading'):
-                            story.append(Paragraph(text, heading_style))
-                        else:
-                            story.append(Paragraph(text, normal_style))
-                    except Exception as e:
-                        # Fallback for text that can't be processed
-                        story.append(Paragraph(text, normal_style))
-            
-            # Process tables
-            for table in doc.tables:
-                try:
-                    # Convert table data to list of lists
-                    table_data = []
-                    for row in table.rows:
-                        row_data = []
-                        for cell in row.cells:
-                            cell_text = cell.text.strip()
-                            # Handle empty cells
-                            if not cell_text:
-                                cell_text = " "
-                            row_data.append(cell_text)
-                        table_data.append(row_data)
-                    
-                    if table_data:
-                        # Create table with appropriate style
+            # 收集所有图片的引用ID和内容
+            image_parts = {}
+            try:
+                for rel in doc.part.rels.values():
+                    if "image" in rel.target_ref:
                         try:
-                            pdf_table = Table(table_data)
-                            
-                            # Add table style
-                            table_style = TableStyle([
-                                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                                ('FONTNAME', (0, 0), (-1, 0), bold_font),
-                                ('FONTSIZE', (0, 0), (-1, 0), 10),
-                                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-                                ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                                ('FONTNAME', (0, 1), (-1, -1), normal_font),
-                                ('FONTSIZE', (0, 1), (-1, -1), 9),
-                            ])
-                            
-                            pdf_table.setStyle(table_style)
-                            story.append(pdf_table)
-                            story.append(Spacer(1, 12))
-                        except Exception as e:
-                            # Fallback for table styling
-                            pdf_table = Table(table_data)
-                            story.append(pdf_table)
-                            story.append(Spacer(1, 12))
-                except Exception as e:
-                    # Skip tables that can't be processed
-                    continue
+                            # 使用relationship ID作为键
+                            image_parts[rel.rId] = rel.target_part.blob
+                        except Exception:
+                            continue
+            except Exception:
+                pass
             
-            # Process images
-            for rel in doc.part.rels.values():
-                if "image" in rel.target_ref:
+            # 按顺序处理文档中的所有块级元素（段落和表格）
+            for block in self._iter_block_items(doc):
+                if isinstance(block, Paragraph):
+                    # 处理段落
+                    text = block.text.strip()
+                    has_image = False
+                    
+                    # 先检查段落中是否有图片（即使没有文字也要检查！）
                     try:
-                        image_data = rel.target_part.blob
-                        image_stream = io.BytesIO(image_data)
-                        img = RLImage(image_stream)
-                        
-                        # Calculate image size to fit page
-                        img_width, img_height = img.getSize()
-                        max_width = 6 * inch  # Max width is 6 inches
-                        max_height = 8 * inch  # Max height is 8 inches
-                        
-                        # Scale image if necessary
-                        if img_width > max_width or img_height > max_height:
-                            ratio = min(max_width / img_width, max_height / img_height)
-                            img_width *= ratio
-                            img_height *= ratio
-                        
-                        # Create a reportlab Image object instead of using ImageReader directly
-                        from reportlab.platypus import Image as RLImagePlatypus
-                        rl_img = RLImagePlatypus(image_stream, width=img_width, height=img_height)
-                        
-                        # Add image to story
+                        for run in block.runs:
+                            # 检查run中是否包含图片
+                            if hasattr(run, '_element'):
+                                for drawing in run._element.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing'):
+                                    # 尝试提取图片
+                                    try:
+                                        blip = drawing.find('.//{http://schemas.openxmlformats.org/drawingml/2006/main}blip')
+                                        if blip is not None:
+                                            embed = blip.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
+                                            if embed and embed in image_parts:
+                                                has_image = True
+                                                # 找到对应的图片
+                                                image_data = image_parts[embed]
+                                                image_stream = io.BytesIO(image_data)
+                                                
+                                                try:
+                                                    # 创建图片对象
+                                                    img = RLImage(image_stream)
+                                                    img_width, img_height = img.getSize()
+                                                    
+                                                    # 计算合适的尺寸
+                                                    max_width = 7 * inch
+                                                    max_height = 9 * inch
+                                                    
+                                                    if img_width > max_width or img_height > max_height:
+                                                        ratio = min(max_width / img_width, max_height / img_height)
+                                                        img_width *= ratio
+                                                        img_height *= ratio
+                                                    
+                                                    # 添加图片
+                                                    # 重新创建BytesIO对象，因为前面读取过了
+                                                    image_stream = io.BytesIO(image_data)
+                                                    rl_img = RLImage2(image_stream, width=img_width, height=img_height)
+                                                    story.append(Spacer(1, 6))
+                                                    story.append(rl_img)
+                                                    story.append(Spacer(1, 6))
+                                                except Exception as img_err:
+                                                    # 图片处理失败，记录但继续
+                                                    print(f"Warning: Failed to process image: {img_err}")
+                                                    continue
+                                    except Exception as draw_err:
+                                        print(f"Warning: Failed to extract image from drawing: {draw_err}")
+                                        continue
+                    except Exception as run_err:
+                        print(f"Warning: Failed to process runs for images: {run_err}")
+                        pass
+                    
+                    # 如果段落有文字，添加文字
+                    if text:
+                        try:
+                            # 确定样式
+                            style_name = block.style.name if block.style else 'Normal'
+                            
+                            if style_name.startswith('Heading 1'):
+                                para_style = heading1_style
+                            elif style_name.startswith('Heading 2'):
+                                para_style = heading2_style
+                            elif style_name.startswith('Heading 3'):
+                                para_style = heading3_style
+                            else:
+                                # 根据对齐方式选择样式
+                                alignment = self._get_paragraph_alignment(block)
+                                if alignment == TA_CENTER:
+                                    para_style = center_style
+                                elif alignment == TA_RIGHT:
+                                    para_style = right_style
+                                else:
+                                    para_style = normal_style
+                            
+                            # 创建段落
+                            story.append(RLParagraph(text, para_style))
+                                
+                        except Exception as e:
+                            # Fallback for text that can't be processed
+                            print(f"Warning: Failed to process paragraph text: {e}")
+                            try:
+                                story.append(RLParagraph(text, normal_style))
+                            except:
+                                pass
+                    elif not has_image:
+                        # 既没有文字也没有图片的空段落，作为间距
                         story.append(Spacer(1, 6))
-                        story.append(rl_img)
-                        story.append(Spacer(1, 6))
+                
+                elif isinstance(block, Table):
+                    # 处理表格
+                    try:
+                        # Convert table data to list of lists
+                        table_data = []
+                        for row in block.rows:
+                            row_data = []
+                            for cell in row.cells:
+                                cell_text = cell.text.strip()
+                                # Handle empty cells
+                                if not cell_text:
+                                    cell_text = " "
+                                row_data.append(cell_text)
+                            table_data.append(row_data)
+                        
+                        if table_data:
+                            try:
+                                # 创建表格，让reportlab自动计算列宽
+                                pdf_table = RLTable(table_data, repeatRows=1)
+                                
+                                # Add table style with better formatting
+                                table_style = TableStyle([
+                                    # 表头样式
+                                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4472C4')),
+                                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                                    ('FONTNAME', (0, 0), (-1, 0), bold_font),
+                                    ('FONTSIZE', (0, 0), (-1, 0), 11),
+                                    ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                                    ('TOPPADDING', (0, 0), (-1, 0), 10),
+                                    # 数据行样式
+                                    ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+                                    ('FONTNAME', (0, 1), (-1, -1), normal_font),
+                                    ('FONTSIZE', (0, 1), (-1, -1), 10),
+                                    ('TOPPADDING', (0, 1), (-1, -1), 6),
+                                    ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
+                                    ('LEFTPADDING', (0, 0), (-1, -1), 8),
+                                    ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+                                    # 边框
+                                    ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                                    ('LINEBELOW', (0, 0), (-1, 0), 2, colors.HexColor('#4472C4')),
+                                ])
+                                
+                                pdf_table.setStyle(table_style)
+                                story.append(Spacer(1, 8))
+                                story.append(pdf_table)
+                                story.append(Spacer(1, 12))
+                            except Exception as e:
+                                # Fallback for table styling - 使用简单样式
+                                print(f"Warning: Failed to apply table style, using simple style: {e}")
+                                try:
+                                    pdf_table = RLTable(table_data)
+                                    story.append(Spacer(1, 8))
+                                    story.append(pdf_table)
+                                    story.append(Spacer(1, 12))
+                                except Exception as e2:
+                                    print(f"Warning: Failed to create table: {e2}")
+                        else:
+                            print("Warning: Empty table data, skipping table")
                     except Exception as e:
-                        # Skip images that can't be processed
+                        # Skip tables that can't be processed
+                        print(f"Warning: Failed to process table: {e}")
                         continue
             
             # Build PDF
@@ -472,7 +653,7 @@ class WordToPdfTool(Tool):
                 })
                 return {
                     "success": True, 
-                    "message": "Word document converted to PDF successfully using python-docx and reportlab with Chinese font support",
+                    "message": "Word document converted to PDF successfully using pure Python libraries (python-docx + reportlab) with improved layout preservation",
                     "output_files": output_files
                 }
             else:
