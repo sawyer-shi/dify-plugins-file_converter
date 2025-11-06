@@ -308,51 +308,199 @@ class WordToPdfTool(Tool):
         else:
             return TA_LEFT
     
-    def _get_paragraph_numbering(self, paragraph):
+    def _parse_numbering_format(self, doc):
         """
-        获取段落的编号信息（如果有的话）
+        解析Word文档的编号格式定义
+        从numbering.xml中提取所有编号格式信息
+        
+        Args:
+            doc: Document对象
+            
+        Returns:
+            字典：{(numId, level): {'format': 'decimal'/'chineseCounting'/etc, 'prefix': '', 'suffix': ''}}
+        """
+        numbering_formats = {}
+        
+        try:
+            numbering_part = doc.part.numbering_part
+            if numbering_part is None:
+                return numbering_formats
+            
+            # 获取numbering元素
+            numbering_element = numbering_part.element
+            
+            # 解析abstractNum定义（抽象编号定义）
+            abstract_nums = {}
+            for abstractNum in numbering_element.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}abstractNum'):
+                abstractNumId = abstractNum.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}abstractNumId')
+                
+                # 解析每个级别的定义
+                for lvl in abstractNum.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}lvl'):
+                    ilvl = lvl.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}ilvl')
+                    
+                    # 获取编号格式
+                    numFmt = lvl.find('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}numFmt')
+                    fmt = numFmt.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val') if numFmt is not None else 'decimal'
+                    
+                    # 获取编号文本格式（包含前缀、后缀）
+                    lvlText = lvl.find('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}lvlText')
+                    text_format = lvlText.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val') if lvlText is not None else '%1'
+                    
+                    # 获取起始值
+                    start = lvl.find('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}start')
+                    start_val = int(start.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val')) if start is not None else 1
+                    
+                    if abstractNumId not in abstract_nums:
+                        abstract_nums[abstractNumId] = {}
+                    
+                    abstract_nums[abstractNumId][ilvl] = {
+                        'format': fmt,
+                        'text_format': text_format,
+                        'start': start_val
+                    }
+            
+            # 解析num定义（实例化的编号定义）
+            for num in numbering_element.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}num'):
+                numId = num.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}numId')
+                
+                # 获取关联的abstractNum
+                abstractNumId = num.find('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}abstractNumId')
+                if abstractNumId is not None:
+                    abstractNumIdVal = abstractNumId.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val')
+                    
+                    # 复制abstractNum的定义到num
+                    if abstractNumIdVal in abstract_nums:
+                        for ilvl, fmt_info in abstract_nums[abstractNumIdVal].items():
+                            numbering_formats[(int(numId), int(ilvl))] = fmt_info
+            
+            return numbering_formats
+            
+        except Exception as e:
+            print(f"Warning: Failed to parse numbering formats: {e}")
+            return numbering_formats
+    
+    def _format_number(self, count, format_type):
+        """
+        根据格式类型格式化编号
+        
+        Args:
+            count: 编号计数值
+            format_type: 编号格式类型（decimal、chineseCounting、lowerLetter等）
+            
+        Returns:
+            格式化后的编号字符串
+        """
+        if format_type == 'decimal':
+            return str(count)
+        elif format_type == 'chineseCounting':
+            # 中文数字编号
+            chinese_nums = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十",
+                          "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十",
+                          "二十一", "二十二", "二十三", "二十四", "二十五", "二十六", "二十七", "二十八", "二十九", "三十"]
+            if count < len(chinese_nums):
+                return chinese_nums[count]
+            else:
+                return str(count)
+        elif format_type == 'chineseCountingThousand':
+            # 大写中文数字
+            return self._convert_to_chinese_number(count)
+        elif format_type == 'lowerLetter':
+            # 小写字母 a, b, c...
+            if count <= 26:
+                return chr(ord('a') + count - 1)
+            else:
+                return str(count)
+        elif format_type == 'upperLetter':
+            # 大写字母 A, B, C...
+            if count <= 26:
+                return chr(ord('A') + count - 1)
+            else:
+                return str(count)
+        elif format_type == 'lowerRoman':
+            # 小写罗马数字
+            return self._to_roman(count).lower()
+        elif format_type == 'upperRoman':
+            # 大写罗马数字
+            return self._to_roman(count)
+        elif format_type == 'bullet':
+            # 项目符号
+            return '•'
+        else:
+            # 默认使用阿拉伯数字
+            return str(count)
+    
+    def _convert_to_chinese_number(self, num):
+        """转换为中文大写数字"""
+        if num == 0:
+            return "零"
+        
+        digits = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"]
+        units = ["", "十", "百", "千"]
+        
+        if num < 10:
+            return digits[num]
+        elif num < 20:
+            return "十" + (digits[num - 10] if num > 10 else "")
+        elif num < 100:
+            tens = num // 10
+            ones = num % 10
+            return digits[tens] + "十" + (digits[ones] if ones > 0 else "")
+        else:
+            # 简化处理，只处理到99
+            return str(num)
+    
+    def _to_roman(self, num):
+        """转换为罗马数字"""
+        val = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1]
+        syms = ['M', 'CM', 'D', 'CD', 'C', 'XC', 'L', 'XL', 'X', 'IX', 'V', 'IV', 'I']
+        roman_num = ''
+        i = 0
+        while num > 0:
+            for _ in range(num // val[i]):
+                roman_num += syms[i]
+                num -= val[i]
+            i += 1
+        return roman_num
+    
+    def _extract_numbering_text(self, paragraph):
+        """
+        尝试从段落的XML中提取编号文本的替代方法
+        检查段落是否以常见的编号模式开头
         
         Args:
             paragraph: python-docx的Paragraph对象
             
         Returns:
-            编号文本（如"1. "、"一、"等），如果没有编号则返回空字符串
+            提取的编号文本，如果没有则返回空字符串
         """
         try:
-            # 检查段落是否有编号
-            if paragraph._element.pPr is None:
-                return ""
+            # 获取段落的完整文本
+            full_text = paragraph.text
             
-            numPr = paragraph._element.pPr.numPr
-            if numPr is None:
-                return ""
+            # 检查是否以常见的编号模式开头
+            import re
             
-            # 获取编号级别
-            ilvl = numPr.ilvl
-            if ilvl is None:
-                level = 0
-            else:
-                level = ilvl.val
+            # 匹配中文数字编号：一、二、三、
+            chinese_pattern = r'^([一二三四五六七八九十百千]+)[、．.]'
+            match = re.match(chinese_pattern, full_text)
+            if match:
+                return match.group(0) + " "
             
-            # 获取编号ID
-            numId = numPr.numId
-            if numId is None:
-                return ""
+            # 匹配阿拉伯数字编号：1. 2. 3.
+            arabic_pattern = r'^(\d+)[、．.]'
+            match = re.match(arabic_pattern, full_text)
+            if match:
+                return match.group(0) + " "
             
-            # 根据级别添加缩进
-            indent = "  " * level
+            # 匹配带括号的编号：(1) (2) (3) 或 （1）（2）（3）
+            paren_pattern = r'^[（(]\d+[）)]'
+            match = re.match(paren_pattern, full_text)
+            if match:
+                return match.group(0) + " "
             
-            # 尝试从段落文本中提取编号
-            # Word文档中的编号通常会显示在文本开头
-            # 但通过python-docx的paragraph.text获取时可能不包含编号
-            # 所以我们需要通过其他方式检测
+            return ""
             
-            # 简单处理：如果段落有编号属性，添加一个占位符
-            # 因为无法直接从python-docx获取编号的实际文本
-            # 我们返回一个标记，后续在文本处理时检测
-            return ""  # 暂时返回空，因为编号信息难以精确提取
-            
-        except Exception as e:
+        except Exception:
             return ""
     
     def _process_conversion(self, input_path: str, temp_dir: str) -> Dict[str, Any]:
@@ -509,6 +657,15 @@ class WordToPdfTool(Tool):
             except Exception:
                 pass
             
+            # 解析文档的编号格式定义
+            print("Parsing numbering formats from document...")
+            numbering_formats = self._parse_numbering_format(doc)
+            print(f"Found {len(numbering_formats)} numbering format definitions")
+            
+            # 创建编号计数器字典，用于追踪不同级别的编号
+            # key: (numId, level), value: 当前计数
+            numbering_counters = {}
+            
             # 按顺序处理文档中的所有块级元素（段落和表格）
             for block in self._iter_block_items(doc):
                 if isinstance(block, Paragraph):
@@ -575,6 +732,74 @@ class WordToPdfTool(Tool):
                     # 如果段落有文字，添加文字
                     if text:
                         try:
+                            # 检查段落是否有自动编号
+                            numbering_text = ""
+                            try:
+                                if block._element.pPr is not None:
+                                    numPr = block._element.pPr.numPr
+                                    if numPr is not None:
+                                        # 段落有编号属性
+                                        numId_elem = numPr.numId
+                                        ilvl_elem = numPr.ilvl
+                                        
+                                        if numId_elem is not None:
+                                            numId = numId_elem.val
+                                            
+                                            # 关键检查：numId为0表示段落没有实际编号
+                                            # 这是Word中取消编号的方式
+                                            if numId == 0:
+                                                # 这个段落没有编号，跳过
+                                                print(f"Skipping numbering: numId=0 (no numbering)")
+                                            else:
+                                                # numId > 0，这是一个真正有编号的段落
+                                                level = ilvl_elem.val if ilvl_elem is not None else 0
+                                                
+                                                # 更新计数器
+                                                counter_key = (numId, level)
+                                                
+                                                # 获取起始值
+                                                start_val = 1
+                                                if counter_key in numbering_formats:
+                                                    start_val = numbering_formats[counter_key].get('start', 1)
+                                                
+                                                if counter_key not in numbering_counters:
+                                                    numbering_counters[counter_key] = start_val - 1
+                                                numbering_counters[counter_key] += 1
+                                                
+                                                # 生成编号文本
+                                                count = numbering_counters[counter_key]
+                                                
+                                                # 使用从文档中解析的格式
+                                                if counter_key in numbering_formats:
+                                                    fmt_info = numbering_formats[counter_key]
+                                                    format_type = fmt_info['format']
+                                                    text_format = fmt_info['text_format']
+                                                    
+                                                    # 格式化编号
+                                                    formatted_num = self._format_number(count, format_type)
+                                                    
+                                                    # 应用文本格式（替换%1, %2等占位符）
+                                                    # text_format例如："%1、" 或 "第%1章" 或 "(%1)"
+                                                    numbering_text = text_format.replace(f'%{level + 1}', formatted_num)
+                                                    
+                                                    # 如果text_format中没有占位符，直接使用格式化的数字
+                                                    if '%' not in text_format:
+                                                        numbering_text = formatted_num + " "
+                                                    
+                                                    print(f"Generated numbering: numId={numId}, level={level}, count={count}, format={format_type}, text={numbering_text}")
+                                                else:
+                                                    # 如果没有找到格式定义，使用默认格式
+                                                    print(f"Warning: No format found for numId={numId}, level={level}, using default")
+                                                    numbering_text = f"{count}. "
+                            except Exception as num_err:
+                                # 编号提取失败，继续处理
+                                print(f"Warning: Failed to generate numbering: {num_err}")
+                                pass
+                            
+                            # 如果提取到编号，添加到文本前面
+                            if numbering_text:
+                                text = numbering_text + text
+                            
                             # 确定样式
                             style_name = block.style.name if block.style else 'Normal'
                             
