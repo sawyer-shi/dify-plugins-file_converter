@@ -117,10 +117,54 @@ class PdfToWordTool(Tool):
         except Exception as e:
             yield self.create_text_message(f"Error during conversion: {str(e)}")
     
+    def _detect_merged_cells(self, cells, rows, cols):
+        """
+        检测合并单元格
+        算法：
+        1. 垂直合并：连续的空单元格 + 上方有内容 = 垂直合并
+        2. 水平合并：连续的相同内容 = 水平合并
+        
+        返回: [(start_row, start_col, end_row, end_col), ...]
+        """
+        merged_ranges = []
+        
+        # 创建单元格矩阵
+        cell_matrix = [[None for _ in range(cols)] for _ in range(rows)]
+        for cell_info in cells:
+            r, c = cell_info["row"], cell_info["col"]
+            if r < rows and c < cols:
+                cell_matrix[r][c] = cell_info["text"]
+        
+        # 检测垂直合并（同一列连续的空单元格）
+        for col in range(cols):
+            row = 0
+            while row < rows:
+                # 找到有内容的单元格
+                if cell_matrix[row][col]:
+                    # 向下查找连续的空单元格
+                    merge_end = row
+                    for next_row in range(row + 1, rows):
+                        if not cell_matrix[next_row][col] or cell_matrix[next_row][col].strip() == "":
+                            merge_end = next_row
+                        else:
+                            break
+                    
+                    # 如果有连续空单元格，标记为合并
+                    if merge_end > row:
+                        merged_ranges.append((row, col, merge_end, col))
+                        print(f"Detected vertical merge: ({row},{col}) to ({merge_end},{col})")
+                        row = merge_end + 1
+                    else:
+                        row += 1
+                else:
+                    row += 1
+        
+        return merged_ranges
+    
     def _create_table_from_structure(self, doc, structure):
         """
         根据PDF表格结构创建Word表格
-        先创建结构，再填入数据，最后应用样式
+        先创建结构，再填入数据，检测并应用合并单元格
         
         Args:
             doc: Word Document对象
@@ -151,19 +195,38 @@ class PdfToWordTool(Tool):
                 for row in word_table.rows:
                     row.cells[col_idx].width = col_width
         
-        # 3. 填入数据和应用样式
+        # 3. 检测合并单元格
+        merged_ranges = self._detect_merged_cells(cells, rows, cols)
+        
+        # 4. 执行合并操作
+        for start_row, start_col, end_row, end_col in merged_ranges:
+            try:
+                # 合并单元格
+                if start_row < rows and end_row < rows and start_col < cols and end_col < cols:
+                    start_cell = word_table.cell(start_row, start_col)
+                    end_cell = word_table.cell(end_row, end_col)
+                    start_cell.merge(end_cell)
+                    print(f"Merged cells: ({start_row},{start_col}) to ({end_row},{end_col})")
+            except Exception as e:
+                print(f"Warning: Failed to merge cells ({start_row},{start_col})-({end_row},{end_col}): {e}")
+        
+        # 5. 填入数据和应用样式
         for cell_info in cells:
             row_idx = cell_info["row"]
             col_idx = cell_info["col"]
             text = cell_info["text"]
             bg_color = cell_info.get("bg_color")
             
+            # 跳过空单元格（可能是被合并的）
+            if not text or text.strip() == "":
+                continue
+            
             if row_idx < rows and col_idx < cols:
-                cell = word_table.cell(row_idx, col_idx)
-                
-                # 清空并设置内容
-                cell.text = ""
-                if text:
+                try:
+                    cell = word_table.cell(row_idx, col_idx)
+                    
+                    # 清空并设置内容
+                    cell.text = ""
                     p = cell.paragraphs[0]
                     run = p.add_run(text)
                     
@@ -205,6 +268,8 @@ class PdfToWordTool(Tool):
                     
                     # 设置单元格垂直对齐
                     cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                except Exception as e:
+                    print(f"Warning: Failed to format cell ({row_idx},{col_idx}): {e}")
         
         return word_table
     
@@ -980,6 +1045,8 @@ class PdfToWordTool(Tool):
                     
                     elif element_type == "image":
                         # 添加图片
+                        from docx.shared import Inches as DocxInches
+                        
                         img_data = element_data["data"]
                         img_stream = io.BytesIO(img_data)
                         
@@ -994,7 +1061,7 @@ class PdfToWordTool(Tool):
                         else:
                             doc_width = min(4.0, width / 100.0)
                         
-                        doc.add_picture(img_stream, width=Inches(doc_width))
+                        doc.add_picture(img_stream, width=DocxInches(doc_width))
                 
                 # 在页面之间添加分页符（除了最后一页）
                 if page_num < len(pdf_document) - 1:
