@@ -14,10 +14,17 @@ try:
     import fitz  # PyMuPDF
     from docx import Document
     from docx.shared import Inches
-    PYPDF2_AVAILABLE = True
+    PYMUPDF_AVAILABLE = True
 except ImportError:
-    # Fallback for environments without required libraries
-    PYPDF2_AVAILABLE = False
+    PYMUPDF_AVAILABLE = False
+
+try:
+    import pdfplumber
+    PDFPLUMBER_AVAILABLE = True
+except ImportError:
+    PDFPLUMBER_AVAILABLE = False
+
+PYPDF2_AVAILABLE = PYMUPDF_AVAILABLE  # 兼容性变量
 
 class PdfToWordTool(Tool):
     """Tool for converting PDF documents to Word format."""
@@ -110,62 +117,325 @@ class PdfToWordTool(Tool):
         except Exception as e:
             yield self.create_text_message(f"Error during conversion: {str(e)}")
     
-    def _format_table(self, word_table, table_data):
+    def _create_table_from_structure(self, doc, structure):
+        """
+        根据PDF表格结构创建Word表格
+        先创建结构，再填入数据，最后应用样式
+        
+        Args:
+            doc: Word Document对象
+            structure: 表格结构信息
+            
+        Returns:
+            创建的Word表格对象
+        """
+        from docx.shared import Pt, Cm, RGBColor
+        from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.oxml import OxmlElement
+        from docx.oxml.shared import qn
+        
+        rows = structure["rows"]
+        cols = structure["cols"]
+        col_widths = structure.get("col_widths", [])
+        cells = structure.get("cells", [])
+        
+        # 1. 创建空表格
+        word_table = doc.add_table(rows=rows, cols=cols)
+        word_table.style = 'Table Grid'
+        word_table.alignment = WD_TABLE_ALIGNMENT.LEFT
+        
+        # 2. 设置列宽（使用PDF的实际列宽）
+        if col_widths and len(col_widths) == cols:
+            for col_idx, col_width in enumerate(col_widths):
+                for row in word_table.rows:
+                    row.cells[col_idx].width = col_width
+        
+        # 3. 填入数据和应用样式
+        for cell_info in cells:
+            row_idx = cell_info["row"]
+            col_idx = cell_info["col"]
+            text = cell_info["text"]
+            bg_color = cell_info.get("bg_color")
+            
+            if row_idx < rows and col_idx < cols:
+                cell = word_table.cell(row_idx, col_idx)
+                
+                # 清空并设置内容
+                cell.text = ""
+                if text:
+                    p = cell.paragraphs[0]
+                    run = p.add_run(text)
+                    
+                    # 设置字体
+                    run.font.size = Pt(9)
+                    run.font.name = 'Calibri'
+                    run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+                    
+                    # 设置段落格式
+                    p.paragraph_format.space_after = Pt(2)
+                    p.paragraph_format.space_before = Pt(2)
+                    p.paragraph_format.line_spacing = 1.15
+                    
+                    # 判断是否为表头（根据背景色或第一行）
+                    is_header = (row_idx == 0 or bg_color is not None)
+                    
+                    if is_header:
+                        run.font.bold = True
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    else:
+                        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                    
+                    # 应用背景色
+                    if bg_color:
+                        try:
+                            # pdfplumber的颜色是(r, g, b)元组，值范围0-1
+                            r = int(bg_color[0] * 255)
+                            g = int(bg_color[1] * 255)
+                            b = int(bg_color[2] * 255)
+                            bg_hex = f'{r:02X}{g:02X}{b:02X}'
+                            
+                            shading_elm = OxmlElement('w:shd')
+                            shading_elm.set(qn('w:val'), 'clear')
+                            shading_elm.set(qn('w:color'), 'auto')
+                            shading_elm.set(qn('w:fill'), bg_hex)
+                            cell._element.get_or_add_tcPr().append(shading_elm)
+                        except Exception as e:
+                            print(f"Warning: Failed to apply bg color: {e}")
+                    
+                    # 设置单元格垂直对齐
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+        
+        return word_table
+    
+    def _format_table(self, word_table, table_data, cells_info=None):
         """
         Format the Word table with proper styling and preserve headers.
-        改进：更简洁的格式，避免过度装饰
+        严格按照PDF格式，防止文字溢出
+        
+        Args:
+            word_table: python-docx的Table对象
+            table_data: 表格数据（二维列表）
+            cells_info: PDF中提取的单元格格式信息（背景色等）
         """
-        from docx.shared import Pt, Inches
+        from docx.shared import Pt, Inches, Cm, RGBColor
         from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
         from docx.enum.text import WD_ALIGN_PARAGRAPH
         from docx.oxml.ns import nsmap
         from docx.oxml import OxmlElement
+        from docx.oxml.shared import qn
+        
+        # 确保所有行的列数一致（处理不规则表格）
+        if not table_data:
+            return
+        
+        num_cols = max(len(row) for row in table_data)
+        
+        # 规范化表格数据：确保所有行都有相同列数
+        normalized_data = []
+        for row in table_data:
+            # 补齐列数
+            normalized_row = list(row) + [""] * (num_cols - len(row))
+            # 只取前num_cols列
+            normalized_data.append(normalized_row[:num_cols])
+        
+        table_data = normalized_data
+        
+        # 计算每列的最大内容长度（考虑换行和字符宽度）
+        col_max_lengths = [0] * num_cols
+        
+        for row in table_data:
+            for col_idx in range(num_cols):
+                if col_idx < len(row) and row[col_idx] is not None:
+                    text = str(row[col_idx])
+                    # 按换行符分割，取最长的一行
+                    lines = text.split('\n')
+                    max_line_length = 0
+                    for line in lines:
+                        # 中文字符宽度系数
+                        length = sum(1.8 if ord(c) > 127 else 1 for c in line)
+                        max_line_length = max(max_line_length, length)
+                    col_max_lengths[col_idx] = max(col_max_lengths[col_idx], max_line_length)
+        
+        print(f"Column max lengths: {col_max_lengths}")
+        
+        # 计算列宽（基于内容，使用Cm单位更精确）
+        total_length = sum(col_max_lengths)
+        available_width_cm = 16.0  # A4纸宽度（21cm）- 左右边距（各2.5cm）
+        
+        if total_length > 0:
+            col_widths = []
+            for length in col_max_lengths:
+                # 按比例分配宽度
+                if length == 0:
+                    # 空列，给最小宽度
+                    width_cm = 1.5
+                else:
+                    # 基础宽度 + 按比例分配
+                    width_cm = 1.5 + (length / total_length) * (available_width_cm - 1.5 * num_cols)
+                    # 限制范围：最小1.5cm，最大5cm
+                    width_cm = max(1.5, min(width_cm, 5.0))
+                col_widths.append(Cm(width_cm))
+            
+            print(f"Column widths (cm): {[f'{w.cm:.2f}' for w in col_widths]}")
+        else:
+            # 平均分配
+            col_widths = [Cm(available_width_cm / num_cols)] * num_cols
         
         # Fill the table with data and apply formatting
         for row_idx, row in enumerate(table_data):
+            # 设置行高为自动，允许扩展
+            try:
+                word_table.rows[row_idx].height = None
+                word_table.rows[row_idx].height_rule = None  # 自动行高
+            except:
+                pass
+            
             for col_idx, cell_data in enumerate(row):
                 cell = word_table.cell(row_idx, col_idx)
+                
+                # 设置列宽
+                if col_idx < len(col_widths):
+                    cell.width = col_widths[col_idx]
+                
+                # 设置单元格边距（减小内边距）
+                try:
+                    tc = cell._element
+                    tcPr = tc.get_or_add_tcPr()
+                    tcMar = OxmlElement('w:tcMar')
+                    
+                    for margin_name in ['top', 'left', 'bottom', 'right']:
+                        node = OxmlElement(f'w:{margin_name}')
+                        node.set(qn('w:w'), '50')  # 50 twips = 很小的边距
+                        node.set(qn('w:type'), 'dxa')
+                        tcMar.append(node)
+                    
+                    tcPr.append(tcMar)
+                except Exception as e:
+                    print(f"Warning: Failed to set cell margins: {e}")
                 
                 # 清空默认内容
                 cell.text = ""
                 
                 # 添加内容
                 if cell_data is not None and str(cell_data).strip():
-                    p = cell.paragraphs[0]
-                    run = p.add_run(str(cell_data))
+                    cell_text = str(cell_data).strip()
                     
-                    # 设置字体大小
-                    run.font.size = Pt(10)
+                    # 清除默认段落
+                    if cell.paragraphs:
+                        p = cell.paragraphs[0]
+                    else:
+                        p = cell.add_paragraph()
                     
-                    # Format header row (first row) differently
-                    if row_idx == 0:
-                        # Make header text bold
+                    # 设置段落格式（紧凑）
+                    p.paragraph_format.space_after = Pt(1)
+                    p.paragraph_format.space_before = Pt(1)
+                    p.paragraph_format.line_spacing = 1.15  # 稍微宽松，避免文字重叠
+                    
+                    # 添加文字run
+                    run = p.add_run(cell_text)
+                    
+                    # 设置字体（根据内容长度动态调整）
+                    cell_length = len(cell_text)
+                    if cell_length > 100:
+                        font_size = 7  # 内容很多，用更小字体
+                    elif cell_length > 50:
+                        font_size = 8
+                    else:
+                        font_size = 9
+                    
+                    run.font.size = Pt(font_size)
+                    
+                    # 设置字体名称（确保支持中文）
+                    run.font.name = 'Calibri'
+                    run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+                    
+                    # 检测是否为表头（第一行或有背景色的行）
+                    is_header = (row_idx == 0)
+                    cell_bg_color = None
+                    
+                    # 尝试从cells_info中获取该单元格的背景色
+                    if cells_info:
+                        # 获取当前单元格的bbox（近似）
+                        # 注意：这是一个简化实现，精确匹配需要更复杂的算法
+                        try:
+                            # 根据单元格在表格中的位置估算bbox
+                            # 这里简化处理，只检测整行的背景色
+                            for rect_info in cells_info:
+                                rect_bbox = rect_info["bbox"]
+                                fill_color = rect_info.get("fill")
+                                
+                                # 如果有填充色
+                                if fill_color and fill_color != (1, 1, 1):  # 不是白色
+                                    cell_bg_color = fill_color
+                                    is_header = True  # 有背景色的可能是表头
+                                    break
+                        except:
+                            pass
+                    
+                    # 应用格式
+                    if is_header or row_idx == 0:
                         run.font.bold = True
+                        run.font.size = Pt(9)
                         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                         
-                        # Set header row background to light blue (更接近PDF样式)
+                        # 应用背景色
                         try:
                             shading_elm = OxmlElement('w:shd')
-                            shading_elm.set('{%s}val' % nsmap['w'], 'clear')
-                            shading_elm.set('{%s}color' % nsmap['w'], 'auto')
-                            shading_elm.set('{%s}fill' % nsmap['w'], 'D0E4F7')  # 淡蓝色
+                            shading_elm.set(qn('w:val'), 'clear')
+                            shading_elm.set(qn('w:color'), 'auto')
+                            
+                            # 如果有提取的背景色，使用它；否则使用默认浅灰色
+                            if cell_bg_color:
+                                # pdfplumber的颜色是(r, g, b)元组，值范围0-1
+                                r = int(cell_bg_color[0] * 255) if len(cell_bg_color) > 0 else 231
+                                g = int(cell_bg_color[1] * 255) if len(cell_bg_color) > 1 else 230
+                                b = int(cell_bg_color[2] * 255) if len(cell_bg_color) > 2 else 230
+                                bg_hex = f'{r:02X}{g:02X}{b:02X}'
+                                shading_elm.set(qn('w:fill'), bg_hex)
+                            else:
+                                # 默认浅灰色
+                                shading_elm.set(qn('w:fill'), 'E7E6E6')
+                            
                             cell._element.get_or_add_tcPr().append(shading_elm)
                         except Exception as e:
                             print(f"Warning: Failed to apply cell shading: {e}")
                     else:
-                        # Align content to left for data rows
+                        # 数据行左对齐
                         p.alignment = WD_ALIGN_PARAGRAPH.LEFT
                     
-                    # 设置单元格垂直居中
-                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    # 设置单元格垂直顶部对齐
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
+                    
+                    # 强制单元格宽度（允许换行）
+                    try:
+                        tcPr = cell._element.get_or_add_tcPr()
+                        
+                        # 设置单元格宽度
+                        tcW = OxmlElement('w:tcW')
+                        tcW.set(qn('w:w'), str(int(col_widths[col_idx].twips)))  # 使用twips单位
+                        tcW.set(qn('w:type'), 'dxa')
+                        tcPr.append(tcW)
+                        
+                        # 【重要】不添加noWrap，允许文字自动换行
+                        # 设置文字方向为从左到右
+                        textDirection = OxmlElement('w:textDirection')
+                        textDirection.set(qn('w:val'), 'lrTb')  # left-to-right, top-to-bottom
+                        tcPr.append(textDirection)
+                    except Exception as e:
+                        print(f"Warning: Failed to set cell width: {e}")
         
-        # Set table alignment to left (更自然)
+        # Set table alignment to left
         word_table.alignment = WD_TABLE_ALIGNMENT.LEFT
         
-        # 设置表格自动调整
-        word_table.autofit = True
+        # 禁用自动调整
+        word_table.autofit = False
+        try:
+            word_table.allow_autofit = False
+        except:
+            pass
         
-        # 设置表格样式为网格线
+        # 设置表格样式为简单网格
         try:
             word_table.style = 'Table Grid'
         except:
@@ -175,14 +445,266 @@ class PdfToWordTool(Tool):
         """Validate if the input file format is supported for PDF to Word conversion."""
         return file_extension.lower() == ".pdf"
     
-    def _get_elements_with_position(self, page, pdf_document):
+    def _analyze_table_structure(self, table, page):
+        """
+        分析PDF表格的实际结构
+        返回: {
+            "rows": 行数,
+            "cols": 列数,
+            "cells": [{row, col, rowspan, colspan, text, bg_color}, ...]
+        }
+        """
+        structure = {
+            "rows": 0,
+            "cols": 0,
+            "cells": [],
+            "col_widths": [],
+            "row_heights": []
+        }
+        
+        try:
+            # 获取表格的行和列
+            rows = table.rows
+            cols = table.cols
+            
+            structure["rows"] = len(rows) - 1 if len(rows) > 0 else 0  # 减1因为包含边界
+            structure["cols"] = len(cols) - 1 if len(cols) > 0 else 0
+            
+            # 计算列宽（基于PDF的实际列坐标）
+            if len(cols) > 1:
+                col_widths_pts = []
+                for i in range(len(cols) - 1):
+                    width = cols[i+1] - cols[i]
+                    col_widths_pts.append(width)
+                
+                # 转换为厘米
+                from docx.shared import Cm
+                # PDF坐标单位是点（pt），1 pt = 0.0353 cm
+                structure["col_widths"] = [Cm(w * 0.0353) for w in col_widths_pts]
+            
+            # 计算行高
+            if len(rows) > 1:
+                row_heights_pts = []
+                for i in range(len(rows) - 1):
+                    height = rows[i+1] - rows[i]
+                    row_heights_pts.append(height)
+                structure["row_heights"] = row_heights_pts
+            
+            # 提取每个单元格的信息
+            bbox = table.bbox
+            
+            # 获取表格区域内的文本和背景色
+            # 使用pdfplumber的chars来获取文本和颜色
+            chars = page.chars
+            table_chars = [c for c in chars if 
+                          c['x0'] >= bbox[0] and c['x1'] <= bbox[2] and
+                          c['top'] >= bbox[1] and c['bottom'] <= bbox[3]]
+            
+            # 获取背景色矩形
+            rects = page.rects
+            table_rects = [r for r in rects if
+                          r['x0'] >= bbox[0] - 2 and r['x1'] <= bbox[2] + 2 and
+                          r['top'] >= bbox[1] - 2 and r['bottom'] <= bbox[3] + 2]
+            
+            # 为每个单元格创建信息
+            for row_idx in range(structure["rows"]):
+                for col_idx in range(structure["cols"]):
+                    # 计算单元格边界
+                    cell_x0 = cols[col_idx]
+                    cell_x1 = cols[col_idx + 1]
+                    cell_y0 = rows[row_idx]
+                    cell_y1 = rows[row_idx + 1]
+                    
+                    # 提取单元格内的文本
+                    cell_chars = [c for c in table_chars if
+                                 c['x0'] >= cell_x0 and c['x1'] <= cell_x1 and
+                                 c['top'] >= cell_y0 and c['bottom'] <= cell_y1]
+                    
+                    cell_text = ''.join([c['text'] for c in cell_chars])
+                    
+                    # 检测背景色
+                    bg_color = None
+                    for rect in table_rects:
+                        # 检查矩形是否覆盖该单元格
+                        if (rect['x0'] <= cell_x0 + 2 and rect['x1'] >= cell_x1 - 2 and
+                            rect['top'] <= cell_y0 + 2 and rect['bottom'] >= cell_y1 - 2):
+                            fill = rect.get('non_stroking_color')
+                            if fill and fill != (1, 1, 1):  # 不是白色
+                                bg_color = fill
+                                break
+                    
+                    structure["cells"].append({
+                        "row": row_idx,
+                        "col": col_idx,
+                        "rowspan": 1,  # 暂时不检测合并
+                        "colspan": 1,
+                        "text": cell_text.strip(),
+                        "bg_color": bg_color
+                    })
+            
+        except Exception as e:
+            print(f"Warning: Failed to analyze table structure: {e}")
+        
+        return structure
+    
+    def _extract_tables_with_pdfplumber(self, pdf_path, page_num):
+        """
+        使用pdfplumber提取表格结构和数据
+        返回: [{"structure": table_structure, "bbox": bbox}, ...]
+        """
+        tables_info = []
+        
+        if not PDFPLUMBER_AVAILABLE:
+            return tables_info
+        
+        try:
+            with pdfplumber.open(pdf_path) as pdf:
+                if page_num >= len(pdf.pages):
+                    return tables_info
+                
+                page = pdf.pages[page_num]
+                
+                # 提取所有表格
+                tables = page.find_tables(table_settings={
+                    "vertical_strategy": "lines",
+                    "horizontal_strategy": "lines",
+                    "intersection_tolerance": 3,
+                    "join_tolerance": 3
+                })
+                
+                for table in tables:
+                    try:
+                        # 分析表格结构
+                        structure = self._analyze_table_structure(table, page)
+                        
+                        if structure and structure["rows"] > 0 and structure["cols"] > 0:
+                            bbox = table.bbox
+                            
+                            tables_info.append({
+                                "structure": structure,
+                                "bbox": bbox
+                            })
+                            
+                            print(f"Analyzed table: {structure['rows']} rows x {structure['cols']} cols")
+                            print(f"  Column widths: {[f'{w.cm:.2f}cm' for w in structure['col_widths']]}")
+                            
+                    except Exception as e:
+                        print(f"Warning: pdfplumber failed to extract table: {e}")
+                        continue
+        
+        except Exception as e:
+            print(f"Warning: pdfplumber processing failed: {e}")
+        
+        return tables_info
+    
+    def _get_elements_with_position(self, page, pdf_document, pdf_path=None, page_num=0):
         """
         获取页面所有元素及其位置，按照从上到下的顺序排列
         返回: [(y_position, element_type, element_data), ...]
+        
+        优先使用pdfplumber提取表格（更准确，支持合并单元格）
+        fallback到PyMuPDF的find_tables()
+        
+        关键改进：先提取表格，再提取文本，排除表格区域避免重复
         """
         elements = []
         
-        # 1. 获取文本块及其位置
+        # 先收集所有表格的区域，用于后续排除
+        table_regions = []
+        
+        # 步骤1：先提取表格（优先pdfplumber）
+        # 2. 获取表格及其位置
+        # 优先使用pdfplumber（更准确，支持合并单元格）
+        tables_extracted = False
+        
+        if PDFPLUMBER_AVAILABLE and pdf_path:
+            try:
+                print(f"Using pdfplumber to extract tables on page {page_num + 1}")
+                pdfplumber_tables = self._extract_tables_with_pdfplumber(pdf_path, page_num)
+                
+                if pdfplumber_tables:
+                    print(f"pdfplumber found {len(pdfplumber_tables)} tables")
+                    for table_info in pdfplumber_tables:
+                        bbox = table_info["bbox"]
+                        y_position = bbox[1]  # top coordinate
+                        structure = table_info["structure"]
+                        
+                        if structure and structure["rows"] > 0 and structure["cols"] > 0:
+                            elements.append((
+                                y_position,
+                                "table_structured",  # 新类型：结构化表格
+                                {
+                                    "structure": structure,
+                                    "bbox": bbox
+                                }
+                            ))
+                            # 记录表格区域，用于排除文本
+                            table_regions.append(bbox)
+                    tables_extracted = True
+            except Exception as e:
+                print(f"Warning: pdfplumber table extraction failed: {e}")
+        
+        # Fallback到PyMuPDF的find_tables
+        if not tables_extracted:
+            try:
+                print(f"Using PyMuPDF to extract tables on page {page_num + 1}")
+                tables = page.find_tables(
+                    vertical_strategy="lines",
+                    horizontal_strategy="lines",
+                    snap_tolerance=3,
+                    join_tolerance=3,
+                    edge_min_length=3,
+                    min_words_vertical=3,
+                    min_words_horizontal=1,
+                )
+                
+                if tables.tables:
+                    print(f"PyMuPDF found {len(tables.tables)} tables")
+                    
+                    for table_idx, table in enumerate(tables.tables):
+                        try:
+                            bbox = table.bbox
+                            y_position = bbox[1]
+                            
+                            # 提取表格数据
+                            table_data = table.extract()
+                            
+                            if table_data and len(table_data) > 0:
+                                # 清理表格数据
+                                cleaned_data = []
+                                for row in table_data:
+                                    cleaned_row = []
+                                    for cell in row:
+                                        if cell is None:
+                                            cleaned_row.append("")
+                                        else:
+                                            cell_text = str(cell).strip()
+                                            cleaned_row.append(cell_text)
+                                    cleaned_data.append(cleaned_row)
+                                
+                                # 过滤空行
+                                cleaned_data = [row for row in cleaned_data if any(cell for cell in row)]
+                                
+                                if cleaned_data:
+                                    print(f"  Table {table_idx + 1}: {len(cleaned_data)} rows x {len(cleaned_data[0])} cols")
+                                    elements.append((
+                                        y_position,
+                                        "table",
+                                        {
+                                            "data": cleaned_data,
+                                            "bbox": bbox,
+                                            "cells_info": None
+                                        }
+                                    ))
+                                    # 记录表格区域
+                                    table_regions.append(bbox)
+                        except Exception as e:
+                            print(f"Warning: Failed to extract table {table_idx}: {e}")
+                            continue
+            except Exception as e:
+                print(f"Warning: PyMuPDF table extraction failed: {e}")
+        
+        # 步骤2：提取文本块（排除表格区域）
         try:
             text_dict = page.get_text("dict")
             blocks = text_dict.get("blocks", [])
@@ -191,6 +713,24 @@ class PdfToWordTool(Tool):
                 if "lines" in block:
                     # 文本块
                     bbox = block.get("bbox", (0, 0, 0, 0))
+                    
+                    # 检查文本块是否在表格区域内（避免重复）
+                    is_in_table = False
+                    for table_bbox in table_regions:
+                        # 检查bbox是否重叠
+                        # table_bbox格式：(x0, y0, x1, y1) 或 (x0, top, x1, bottom)
+                        if (bbox[0] >= table_bbox[0] - 5 and  # x0
+                            bbox[2] <= table_bbox[2] + 5 and  # x1
+                            bbox[1] >= table_bbox[1] - 5 and  # y0
+                            bbox[3] <= table_bbox[3] + 5):    # y1
+                            is_in_table = True
+                            print(f"Skipping text block in table region: {bbox}")
+                            break
+                    
+                    # 如果文本块在表格内，跳过
+                    if is_in_table:
+                        continue
+                    
                     y_position = bbox[1]  # top y coordinate
                     x_position = bbox[0]  # left x coordinate (用于检测缩进)
                     
@@ -200,20 +740,38 @@ class PdfToWordTool(Tool):
                     is_bold = False
                     color = None  # RGB颜色
                     
+                    # 保存每一行的信息，而不是合并成一个块
+                    lines_data = []
                     for line in block["lines"]:
                         line_text = ""
+                        line_font_size = 12
+                        line_is_bold = False
+                        line_color = None
+                        
                         for span in line.get("spans", []):
                             line_text += span.get("text", "")
                             # 获取字体信息
                             if "size" in span:
-                                font_size = span["size"]
+                                line_font_size = span["size"]
                             if "flags" in span:
                                 # flags & 16 表示粗体
-                                is_bold = (span["flags"] & 16) != 0
+                                line_is_bold = (span["flags"] & 16) != 0
                             # 获取颜色信息 (RGB格式)
                             if "color" in span:
-                                color = span["color"]
+                                line_color = span["color"]
+                        
+                        if line_text.strip():
+                            lines_data.append({
+                                "text": line_text.strip(),
+                                "font_size": line_font_size,
+                                "is_bold": line_is_bold,
+                                "color": line_color
+                            })
+                        
                         block_text += line_text + "\n"
+                        font_size = line_font_size
+                        is_bold = line_is_bold
+                        color = line_color
                     
                     if block_text.strip():
                         elements.append((
@@ -225,38 +783,14 @@ class PdfToWordTool(Tool):
                                 "is_bold": is_bold,
                                 "color": color,
                                 "x_position": x_position,
-                                "bbox": bbox
+                                "bbox": bbox,
+                                "lines": lines_data  # 保存每一行的详细信息
                             }
                         ))
         except Exception as e:
             print(f"Warning: Failed to extract text blocks: {e}")
         
-        # 2. 获取表格及其位置
-        try:
-            tables = page.find_tables()
-            if tables.tables:
-                for table in tables.tables:
-                    try:
-                        bbox = table.bbox
-                        y_position = bbox[1]  # top y coordinate
-                        table_data = table.extract()
-                        
-                        if table_data and len(table_data) > 0:
-                            elements.append((
-                                y_position,
-                                "table",
-                                {
-                                    "data": table_data,
-                                    "bbox": bbox
-                                }
-                            ))
-                    except Exception as e:
-                        print(f"Warning: Failed to extract table: {e}")
-                        continue
-        except Exception as e:
-            print(f"Warning: Failed to find tables: {e}")
-        
-        # 3. 获取图片及其位置
+        # 步骤3：获取图片及其位置
         try:
             image_list = page.get_images()
             for img_index, img in enumerate(image_list):
@@ -335,8 +869,8 @@ class PdfToWordTool(Tool):
             for page_num in range(len(pdf_document)):
                 page = pdf_document.load_page(page_num)
                 
-                # 获取页面所有元素并按位置排序
-                elements = self._get_elements_with_position(page, pdf_document)
+                # 获取页面所有元素并按位置排序（传入pdf_path用于pdfplumber）
+                elements = self._get_elements_with_position(page, pdf_document, input_path, page_num)
                 
                 # 按顺序处理每个元素
                 for y_pos, element_type, element_data in elements:
@@ -350,6 +884,7 @@ class PdfToWordTool(Tool):
                         is_bold = element_data["is_bold"]
                         color = element_data.get("color")
                         x_position = element_data.get("x_position", 0)
+                        lines = element_data.get("lines", [])
                         
                         # 判断是否为标题（根据字体大小）
                         if font_size >= 16:
@@ -374,39 +909,74 @@ class PdfToWordTool(Tool):
                                     b = color & 0xFF
                                     run.font.color.rgb = RGBColor(r, g, b)
                         else:
-                            # 普通文本
-                            p = doc.add_paragraph(text)
-                            
-                            # 设置缩进（根据x坐标）
-                            # 页面左边距通常是72点（1英寸），大于这个值说明有缩进
-                            if x_position > 80:  # 有明显缩进
-                                indent_inches = (x_position - 72) / 72.0  # 转换为英寸
-                                p.paragraph_format.left_indent = Inches(min(indent_inches, 2.0))  # 限制最大缩进
-                            
-                            # 应用格式到run
-                            for run in p.runs:
-                                if is_bold:
-                                    run.bold = True
-                                # 应用颜色
-                                if color is not None:
-                                    r = (color >> 16) & 0xFF
-                                    g = (color >> 8) & 0xFF
-                                    b = color & 0xFF
-                                    run.font.color.rgb = RGBColor(r, g, b)
-                                # 设置字体大小
-                                run.font.size = Pt(max(font_size, 9))  # 最小9pt
+                            # 普通文本 - 逐行处理以保留换行
+                            if lines and len(lines) > 1:
+                                # 有多行，逐行添加段落保留换行
+                                for line_data in lines:
+                                    p = doc.add_paragraph()
+                                    
+                                    # 设置缩进
+                                    if x_position > 80:
+                                        indent_inches = (x_position - 72) / 72.0
+                                        p.paragraph_format.left_indent = Inches(min(indent_inches, 2.0))
+                                    
+                                    # 添加文本run
+                                    run = p.add_run(line_data["text"])
+                                    
+                                    # 应用格式
+                                    if line_data.get("is_bold"):
+                                        run.bold = True
+                                    
+                                    # 应用颜色
+                                    line_color = line_data.get("color")
+                                    if line_color is not None:
+                                        r = (line_color >> 16) & 0xFF
+                                        g = (line_color >> 8) & 0xFF
+                                        b = line_color & 0xFF
+                                        run.font.color.rgb = RGBColor(r, g, b)
+                                    
+                                    # 设置字体大小
+                                    line_font_size = line_data.get("font_size", font_size)
+                                    run.font.size = Pt(max(line_font_size, 9))
+                            else:
+                                # 单行文本，直接添加
+                                p = doc.add_paragraph(text)
+                                
+                                # 设置缩进
+                                if x_position > 80:
+                                    indent_inches = (x_position - 72) / 72.0
+                                    p.paragraph_format.left_indent = Inches(min(indent_inches, 2.0))
+                                
+                                # 应用格式到run
+                                for run in p.runs:
+                                    if is_bold:
+                                        run.bold = True
+                                    # 应用颜色
+                                    if color is not None:
+                                        r = (color >> 16) & 0xFF
+                                        g = (color >> 8) & 0xFF
+                                        b = color & 0xFF
+                                        run.font.color.rgb = RGBColor(r, g, b)
+                                    # 设置字体大小
+                                    run.font.size = Pt(max(font_size, 9))
+                    
+                    elif element_type == "table_structured":
+                        # 使用结构化方法创建表格（pdfplumber提取，包含实际列宽和样式）
+                        structure = element_data["structure"]
+                        self._create_table_from_structure(doc, structure)
                     
                     elif element_type == "table":
-                        # 添加表格
+                        # 使用传统方法创建表格（PyMuPDF提取的fallback）
                         table_data = element_data["data"]
+                        cells_info = element_data.get("cells_info", None)
                         
                         if table_data and len(table_data) > 0:
                             cols = len(table_data[0])
                             word_table = doc.add_table(rows=len(table_data), cols=cols)
                             word_table.style = 'Table Grid'
                             
-                            # 填充表格数据（不添加额外说明）
-                            self._format_table(word_table, table_data)
+                            # 填充表格数据（传入cells_info以应用PDF样式）
+                            self._format_table(word_table, table_data, cells_info)
                     
                     elif element_type == "image":
                         # 添加图片
