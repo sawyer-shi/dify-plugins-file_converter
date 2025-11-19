@@ -6,9 +6,9 @@ identity:
     zh_Hans: "PPT转PDF转换器"
 description:
   human:
-    en_US: "Convert PowerPoint presentations (.ppt, .pptx) to PDF format."
-    zh_Hans: "将PowerPoint演示文稿（.ppt, .pptx）转换为PDF格式。"
-  llm: "A tool that converts PowerPoint presentations (.ppt, .pptx) to PDF format using python-office library."
+    en_US: "Convert PowerPoint presentations (.pptx) to PDF format."
+    zh_Hans: "将PowerPoint演示文稿（.pptx）转换为PDF格式。"
+  llm: "A tool that converts PowerPoint presentations (.pptx) to PDF format using python-office library."
 parameters:
   - name: input_file
     type: file

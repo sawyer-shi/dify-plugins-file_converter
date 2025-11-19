@@ -66,7 +66,7 @@ class ExcelToPdfTool(Tool):
                 
             # Validate input file format
             if not self._validate_input_file(file_info["extension"]):
-                yield self.create_text_message("Error: Invalid file format. Only .xls and .xlsx files are supported")
+                yield self.create_text_message("Error: Invalid file format. Only .xlsx files are supported (not .xls)")
                 return
                 
             # Create temporary directory for output
@@ -132,7 +132,7 @@ class ExcelToPdfTool(Tool):
     
     def _validate_input_file(self, file_extension: str) -> bool:
         """Validate if the input file format is supported for Excel to PDF conversion."""
-        return file_extension.lower() in [".xls", ".xlsx"]
+        return file_extension.lower() in [".xlsx"]
     
     def _register_chinese_fonts(self):
         """Register Chinese fonts for PDF generation."""

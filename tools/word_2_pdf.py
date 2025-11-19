@@ -164,7 +164,7 @@ class WordToPdfTool(Tool):
                 
             # Validate input file format
             if not self._validate_input_file(file_info):
-                yield self.create_text_message("Error: Invalid file format. Only .doc and .docx files are supported")
+                yield self.create_text_message("Error: Invalid file format. Only .docx files are supported (not .doc)")
                 return
                 
             # Create temporary directory for input file
@@ -246,7 +246,7 @@ class WordToPdfTool(Tool):
     def _validate_input_file(self, file_info: dict) -> bool:
         """Validate if the input file is a valid Word document."""
         # Check file extension
-        if not file_info["extension"].lower().endswith(('.docx', '.doc')):
+        if not file_info["extension"].lower().endswith('.docx'):
             return False
             
         # Check if file is readable by python-docx

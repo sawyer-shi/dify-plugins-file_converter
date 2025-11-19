@@ -330,7 +330,7 @@ class PptToPdfTool(Tool):
                 
                 # Validate input file format
                 if not self._validate_input_file(file_info):
-                    yield self.create_text_message("Error: Invalid file format or missing dependencies. Only .ppt and .pptx files are supported, and python-pptx with reportlab is required.".encode('utf-8', errors='replace').decode('utf-8'))
+                    yield self.create_text_message("Error: Invalid file format or missing dependencies. Only .pptx files are supported (not .ppt), and python-pptx with reportlab is required.".encode('utf-8', errors='replace').decode('utf-8'))
                     return
                     
                 # Process conversion
@@ -367,7 +367,7 @@ class PptToPdfTool(Tool):
     def _validate_input_file(self, file_info: dict) -> bool:
         """Validate if the input file format is supported for PPT to PDF conversion."""
         # Check file extension
-        if not file_info["extension"].lower().endswith(('.ppt', '.pptx')):
+        if not file_info["extension"].lower().endswith('.pptx'):
             return False
             
         # Check if python-pptx and reportlab are available

@@ -52,9 +52,9 @@ class TextToWordTool(Tool):
                 yield self.create_text_message("Error: Missing required parameter 'input_file'")
                 return
             
-            # Get output format parameter (doc or docx)
+            # Get output format parameter (docx only)
             output_format = tool_parameters.get("output_format", "docx")
-            if output_format not in ["doc", "docx"]:
+            if output_format not in ["docx"]:
                 output_format = "docx"  # Default to docx if invalid format
                 
             # Get file info
@@ -114,7 +114,7 @@ class TextToWordTool(Tool):
                         try:
                             # Use the pre-read content
                             if "content" in file_info:
-                                mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document" if output_format == "docx" else "application/msword"
+                                mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                                 yield self.create_blob_message(
                                     blob=file_info["content"], 
                                     meta={

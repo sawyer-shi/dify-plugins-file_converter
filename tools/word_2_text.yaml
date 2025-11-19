@@ -6,20 +6,21 @@ identity:
     zh_Hans: "Word转文本转换器"
 description:
   human:
-    en_US: "Convert Word documents (.doc, .docx) to plain text format (.txt)."
-    zh_Hans: "将Word文档（.doc, .docx）转换为纯文本格式（.txt）。"
-  llm: "A tool that converts Word documents (.doc, .docx) to plain text format (.txt) using python-docx library."
+    en_US: "Convert Word documents (.docx) to plain text format (.txt)."
+    zh_Hans: "将Word文档（.docx）转换为纯文本格式（.txt）。"
+  llm: "A tool that converts Word documents (.docx) to plain text format (.txt) using python-docx library."
 parameters:
   - name: input_file
     type: file
     required: true
     label:
-      en_US: Input Word File
-      zh_Hans: 输入Word文件
+      en_US: Word Document
+      zh_Hans: Word文档
     human_description:
-      en_US: Upload a Word document (.doc or .docx) to convert to text
-      zh_Hans: 上传一个Word文档(.doc或.docx)以转换为文本
-    form: llm
+      en_US: Upload a Word document (.docx) to convert to text
+      zh_Hans: 上传一个Word文档(.docx)以转换为文本
+    llm_description: "The Word document file to be converted to text"
+    form: form
 extra:
   python:
     source: tools/word_2_text.py

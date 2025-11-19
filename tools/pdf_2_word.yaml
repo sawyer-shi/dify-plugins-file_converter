@@ -6,9 +6,9 @@ identity:
     zh_Hans: "PDF转Word转换器"
 description:
   human:
-    en_US: "Convert PDF documents to Word format (.doc, .docx)."
-    zh_Hans: "将PDF文档转换为Word格式（.doc, .docx）。"
-  llm: "A tool that converts PDF documents to Word format (.doc, .docx) using python-office library."
+    en_US: "Convert PDF documents to Word format (.docx)."
+    zh_Hans: "将PDF文档转换为Word格式（.docx）。"
+  llm: "A tool that converts PDF documents to Word format (.docx) using python-office library."
 parameters:
   - name: input_file
     type: file
@@ -30,14 +30,10 @@ parameters:
     human_description:
       en_US: "Select the output format for the Word document."
       zh_Hans: "选择Word文档的输出格式。"
-    llm_description: "The output format for the Word document: doc or docx"
+    llm_description: "The output format for the Word document: docx"
     form: form
     default: "docx"
     options:
-      - value: "doc"
-        label:
-          en_US: ".doc"
-          zh_Hans: ".doc"
       - value: "docx"
         label:
           en_US: ".docx"

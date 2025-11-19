@@ -914,7 +914,7 @@ class PdfToWordTool(Tool):
             # Default to docx if not specified
             if not output_format:
                 output_format = "docx"
-            elif output_format.lower() not in ["doc", "docx"]:
+            elif output_format.lower() not in ["docx"]:
                 output_format = "docx"
             
             # Generate output file path

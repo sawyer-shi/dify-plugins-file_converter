@@ -6,9 +6,9 @@ identity:
     zh_Hans: "文本转Word转换器"
 description:
   human:
-    en_US: "Convert plain text files (.txt) to Word document format (.doc or .docx)."
-    zh_Hans: "将纯文本文件（.txt）转换为Word文档格式（.doc或.docx）。"
-  llm: "A tool that converts plain text files (.txt) to Word document format (.doc or .docx) using python-docx library."
+    en_US: "Convert plain text files (.txt) to Word document format (.docx)."
+    zh_Hans: "将纯文本文件（.txt）转换为Word文档格式（.docx）。"
+  llm: "A tool that converts plain text files (.txt) to Word document format (.docx) using python-docx library."
 parameters:
   - name: input_file
     type: file
@@ -29,10 +29,6 @@ parameters:
         label:
           en_US: DOCX (Office 2007+)
           zh_Hans: DOCX (Office 2007+)
-      - value: doc
-        label:
-          en_US: DOC (Office 97-2003)
-          zh_Hans: DOC (Office 97-2003)
     label:
       en_US: Output Format
       zh_Hans: 输出格式
