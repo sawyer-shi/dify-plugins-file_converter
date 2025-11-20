@@ -6,20 +6,20 @@ identity:
     zh_Hans: "图片转PDF转换器"
 description:
   human:
-    en_US: "Convert image files (.jpg, .jpeg, .png, .bmp, .tiff) to PDF format."
-    zh_Hans: "将图片文件（.jpg, .jpeg, .png, .bmp, .tiff）转换为PDF格式。"
-  llm: "A tool that converts image files (.jpg, .jpeg, .png, .bmp, .tiff) to PDF format using python-office library."
+    en_US: "Convert multiple image files (.jpg, .jpeg, .png, .bmp, .tiff) to a single PDF document with pages in the same order as uploaded."
+    zh_Hans: "将多张图片文件（.jpg, .jpeg, .png, .bmp, .tiff）按上传顺序转换为单个PDF文档，每张图片对应一页。"
+  llm: "A tool that converts multiple image files (.jpg, .jpeg, .png, .bmp, .tiff) to a single PDF document with pages in the same order as uploaded using python-office library."
 parameters:
-  - name: input_file
-    type: file
+  - name: input_files
+    type: files
     required: true
     label:
-      en_US: Image File
+      en_US: Image Files
       zh_Hans: 图片文件
     human_description:
-      en_US: "Select the image file you want to convert to PDF."
-      zh_Hans: "选择您想要转换为PDF的图片文件。"
-    llm_description: "The image file to be converted to PDF"
+      en_US: "Select the image files you want to convert to PDF. Files will be added to the PDF in the order they appear in this list."
+      zh_Hans: "选择您想要转换为PDF的图片文件。文件将按照在此列表中出现的顺序添加到PDF中。"
+    llm_description: "The image files to be converted to PDF, which will be combined into a single PDF document"
     form: form
 extra:
   python:

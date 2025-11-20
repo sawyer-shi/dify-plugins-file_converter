@@ -87,9 +87,14 @@ Extract text content from PDF documents.
 ### Image Conversions
 
 #### 4. Image to PDF (image_2_pdf)
-Convert images to PDF format.
+Convert one or more images to a single PDF document.
 - **Parameters**:
-  - `input_file`: The image file to convert (required)
+  - `input_files`: The image files to convert (required, supports multiple files)
+- **Features**:
+  - Supports multiple image formats (.jpg, .jpeg, .png, .bmp, .tiff)
+  - Converts multiple images into a single PDF document
+  - Maintains the order of images as they are uploaded
+  - Each image becomes a separate page in the PDF
 
 ### Microsoft Office Conversions
 

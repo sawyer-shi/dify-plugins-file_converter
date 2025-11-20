@@ -1,7 +1,7 @@
 import os
 import tempfile
 from collections.abc import Generator
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 import json
 
 from dify_plugin import Tool
@@ -15,7 +15,7 @@ except ImportError:
     Image = None
 
 class ImageToPdfTool(Tool):
-    """Tool for converting image documents to PDF format."""
+    """Tool for converting multiple image documents to a single PDF format."""
     
     def get_file_info(self, file: File) -> dict:
         """
@@ -38,32 +38,37 @@ class ImageToPdfTool(Tool):
     def _invoke(self, tool_parameters: dict[str, Any]) -> Generator[ToolInvokeMessage]:
         try:
             # Get parameters
-            file = tool_parameters.get("input_file")
+            files = tool_parameters.get("input_files")
             
-            if not file:
-                yield self.create_text_message("Error: Missing required parameter 'input_file'")
+            if not files or len(files) == 0:
+                yield self.create_text_message("Error: Missing required parameter 'input_files'")
                 return
                 
-            # Get file info
-            file_info = self.get_file_info(file)
+            # Get file info for all files
+            files_info = []
+            for file in files:
+                file_info = self.get_file_info(file)
                 
-            # Validate input file format
-            if not self._validate_input_file(file_info["extension"]):
-                yield self.create_text_message("Error: Invalid file format. Only .jpg, .jpeg, .png, .bmp, and .tiff files are supported")
-                return
+                # Validate input file format
+                if not self._validate_input_file(file_info["extension"]):
+                    yield self.create_text_message(f"Error: Invalid file format for {file_info['filename']}. Only .jpg, .jpeg, .png, .bmp, and .tiff files are supported")
+                    return
+                
+                files_info.append(file_info)
                 
             # Create temporary directory for output
             with tempfile.TemporaryDirectory() as temp_dir:
-                # Save the uploaded file to temp directory
-                input_path = os.path.join(temp_dir, file_info["filename"])
-                with open(input_path, "wb") as f:
-                    f.write(file.blob)
-                
-                # Update file_info with the actual path
-                file_info["path"] = input_path
+                # Save all uploaded files to temp directory
+                input_paths = []
+                for i, file in enumerate(files):
+                    file_info = files_info[i]
+                    input_path = os.path.join(temp_dir, file_info["filename"])
+                    with open(input_path, "wb") as f:
+                        f.write(file.blob)
+                    input_paths.append(input_path)
                 
                 # Process conversion
-                result = self._process_conversion(file_info, temp_dir)
+                result = self._process_conversion(input_paths, temp_dir)
                 
                 if result["success"]:
                     # Create output file info
@@ -79,13 +84,13 @@ class ImageToPdfTool(Tool):
                     json_response = {
                         "success": True,
                         "conversion_type": "image_2_pdf",
-                        "input_file": file_info,
+                        "input_files": files_info,
                         "output_files": output_files,
                         "message": result["message"]
                     }
                     
                     # Send text message
-                    yield self.create_text_message(f"Image converted to PDF successfully: {result['message']}")
+                    yield self.create_text_message(f"Images converted to PDF successfully: {result['message']}")
                     
                     # Send JSON message
                     yield self.create_json_message(json_response)
@@ -110,9 +115,8 @@ class ImageToPdfTool(Tool):
         """Validate if the input file format is supported for Image to PDF conversion."""
         return file_extension.lower() in [".jpg", ".jpeg", ".png", ".bmp", ".tiff"]
     
-    def _process_conversion(self, file_info: Dict[str, Any], temp_dir: str) -> Dict[str, Any]:
-        """Process the Image to PDF conversion."""
-        input_path = file_info["path"]
+    def _process_conversion(self, input_paths: List[str], temp_dir: str) -> Dict[str, Any]:
+        """Process the multiple Images to PDF conversion."""
         output_files = []
         
         try:
@@ -120,19 +124,31 @@ class ImageToPdfTool(Tool):
                 return {"success": False, "message": "PIL library is not available for Image conversion"}
             
             # Generate output file path
-            base_name = os.path.splitext(os.path.basename(input_path))[0]
-            output_path = os.path.join(temp_dir, f"{base_name}.pdf")
+            output_path = os.path.join(temp_dir, "combined_images.pdf")
             
-            # Convert Image to PDF using PIL
-            image = Image.open(input_path)
-            if image.mode == 'RGBA':
-                image = image.convert('RGB')
-            image.save(output_path, "PDF", resolution=100.0)
-            output_files.append(output_path)
+            # Convert Images to PDF using PIL
+            images = []
+            for input_path in input_paths:
+                image = Image.open(input_path)
+                # Convert RGBA to RGB to avoid transparency issues in PDF
+                if image.mode == 'RGBA':
+                    image = image.convert('RGB')
+                images.append(image)
+            
+            # Save all images as a single PDF
+            if images:
+                images[0].save(
+                    output_path, 
+                    "PDF", 
+                    resolution=100.0,
+                    save_all=True,
+                    append_images=images[1:]
+                )
+                output_files.append(output_path)
             
             return {
                 "success": True, 
-                "message": "Image converted to PDF successfully",
+                "message": f"Successfully converted {len(images)} images to PDF",
                 "output_files": output_files
             }
                 
