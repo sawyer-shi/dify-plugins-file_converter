@@ -1,667 +1,394 @@
 import os
 import tempfile
-import time
-from collections.abc import Generator
-from typing import Any, Dict, Optional
-import json
 import io
+import time
+from typing import Any, Dict, List, Optional, Union
 
 from dify_plugin import Tool
 from dify_plugin.entities.tool import ToolInvokeMessage
 from dify_plugin.file.file import File
 
-# Try to import reportlab components for Chinese font support
-try:
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
-    from reportlab.lib.fonts import addMapping
-    REPORTLAB_AVAILABLE = True
-except ImportError:
-    REPORTLAB_AVAILABLE = False
-
-# Try to import python-pptx and reportlab components for conversion
+# 导入依赖库，包含错误处理
 try:
     from pptx import Presentation
-    from pptx.enum.shapes import MSO_SHAPE_TYPE, MSO_AUTO_SHAPE_TYPE
-    from pptx.enum.dml import MSO_THEME_COLOR_INDEX
-    from pptx.util import Inches, Emu
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+    # 【修复点】这里导入 MSO_COLOR_TYPE
+    from pptx.enum.dml import MSO_COLOR_TYPE, MSO_THEME_COLOR_INDEX
+    from pptx.dml.color import RGBColor
     from reportlab.pdfgen import canvas
-    from reportlab.lib.pagesizes import letter, A4
-    from reportlab.lib.utils import ImageReader
-    from reportlab.platypus import Table, TableStyle, Paragraph, Spacer, SimpleDocTemplate
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib import colors
-    from reportlab.lib.units import inch
-    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT, TA_JUSTIFY
-    PPTX_REPORTLAB_AVAILABLE = True
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.platypus import Table, TableStyle, Paragraph, Frame, KeepInFrame
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
+    DEPENDENCIES_AVAILABLE = True
 except ImportError:
-    PPTX_REPORTLAB_AVAILABLE = False
+    DEPENDENCIES_AVAILABLE = False
+
+# 常量定义
+EMU_PER_INCH = 914400
+PT_PER_INCH = 72
+EMU_TO_PT = PT_PER_INCH / EMU_PER_INCH
 
 class PptToPdfTool(Tool):
-    """改进的PPT转PDF工具，解决排版、隐藏元素和页数问题"""
-    
-    def get_file_info(self, file: File) -> dict:
-        """
-        获取文件信息
-        Args:
-            file: 文件对象
-        Returns:
-            文件信息字典
-        """
-        return {
-            "filename": file.filename,
-            "extension": file.extension,
-            "mime_type": file.mime_type,
-            "size": file.size,
-            "url": file.url
-        }
-    
-    def _register_chinese_fonts(self):
-        """Register Chinese fonts for reportlab to use."""
-        if not REPORTLAB_AVAILABLE:
+    """
+    Advanced PPT to PDF Converter (Pure Python).
+    Features: Recursive Group Shapes, Text Wrapping, Exact Table Sizing.
+    """
+
+    def _invoke(self, tool_parameters: dict[str, Any]) -> Any:
+        if not DEPENDENCIES_AVAILABLE:
+            yield self.create_text_message("Error: Required libraries (python-pptx, reportlab, Pillow) are missing.")
             return
-            
+
+        input_file = tool_parameters.get("input_file")
+        if not input_file:
+            yield self.create_text_message("Error: Input file is required.")
+            return
+
+        if not input_file.extension or input_file.extension.lower() not in ['.pptx']:
+            yield self.create_text_message("Error: Only .pptx files are supported (not old .ppt).")
+            return
+
         try:
-            # Get the directory of the current script
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            # Get the fonts directory (one level up from tools directory)
-            fonts_dir = os.path.join(os.path.dirname(current_dir), "fonts")
-            
-            # Try to register common Chinese fonts available on Windows
-            font_paths = [
-                # Project Chinese font (highest priority)
-                ('ChineseFont', os.path.join(fonts_dir, "chinese_font.ttc")),
-                # SimSun (宋体)
-                ('SimSun', 'C:/Windows/Fonts/simsun.ttc'),
-                ('SimSun', 'C:/Windows/Fonts/simsun.ttf'),
-                # SimHei (黑体)
-                ('SimHei', 'C:/Windows/Fonts/simhei.ttf'),
-                # Microsoft YaHei (微软雅黑)
-                ('Microsoft YaHei', 'C:/Windows/Fonts/msyh.ttf'),
-                # KaiTi (楷体)
-                ('KaiTi', 'C:/Windows/Fonts/kaiti.ttf'),
-                # FangSong (仿宋)
-                ('FangSong', 'C:/Windows/Fonts/simfang.ttf'),
-            ]
-            
-            registered_fonts = []
-            for font_name, font_path in font_paths:
-                try:
-                    if os.path.exists(font_path):
-                        pdfmetrics.registerFont(TTFont(font_name, font_path))
-                        registered_fonts.append(font_name)
-                        
-                        # If this is the ChineseFont, also register ChineseFont-Bold
-                        if font_name == "ChineseFont":
-                            pdfmetrics.registerFont(TTFont("ChineseFont-Bold", font_path))
-                            registered_fonts.append("ChineseFont-Bold")
-                except Exception as e:
-                    # Continue trying other fonts if one fails
-                    continue
-            
-            # Register bold variants if available
-            bold_variants = [
-                ('SimSun-Bold', 'C:/Windows/Fonts/simsunb.ttf'),
-                ('SimHei-Bold', 'C:/Windows/Fonts/simheib.ttf'),
-            ]
-            
-            for font_name, font_path in bold_variants:
-                try:
-                    if os.path.exists(font_path):
-                        pdfmetrics.registerFont(TTFont(font_name, font_path))
-                        registered_fonts.append(font_name)
-                except Exception as e:
-                    # Continue trying other fonts if one fails
-                    continue
-            
-            # If no Chinese fonts were registered, create a fallback mapping
-            if not registered_fonts:
-                # Map Chinese font names to available fonts as fallback
-                font_mapping = {
-                    'ChineseFont': 'Helvetica',
-                    'ChineseFont-Bold': 'Helvetica-Bold',
-                    'SimSun': 'Helvetica',
-                    'SimHei': 'Helvetica',
-                    'SimSun-Bold': 'Helvetica-Bold',
-                    'SimHei-Bold': 'Helvetica-Bold',
-                    'Microsoft YaHei': 'Helvetica',
-                    'KaiTi': 'Helvetica',
-                    'FangSong': 'Helvetica',
-                }
-                
-                for chinese_font, fallback_font in font_mapping.items():
-                    try:
-                        # Create an alias for the fallback font
-                        if 'Bold' in chinese_font and 'Bold' in fallback_font:
-                            addMapping(chinese_font, 0, 0, fallback_font)
-                        else:
-                            addMapping(chinese_font, 0, 0, fallback_font)
-                    except Exception:
-                        # If even fallback fails, just continue
-                        continue
-                        
-        except Exception as e:
-            # If font registration fails completely, we'll rely on default fonts
-            pass
-    
-    def _is_hidden_shape(self, shape) -> bool:
-        """
-        检查形状是否为隐藏元素
-        Args:
-            shape: PPT形状对象
-        Returns:
-            bool: 是否为隐藏元素
-        """
-        try:
-            # 检查形状是否可见
-            if hasattr(shape, 'visible') and not shape.visible:
-                return True
-                
-            # 检查形状是否为隐藏的占位符
-            if shape.is_placeholder:
-                # 检查占位符类型，跳过页眉页脚等隐藏占位符
-                placeholder_format = shape.placeholder_format
-                if placeholder_format.type in [1, 2, 3, 10, 11, 12, 13, 14, 15]:  # 常见的隐藏占位符类型
-                    return True
-            
-            # 检查形状是否在幻灯片外
-            if hasattr(shape, 'left') and hasattr(shape, 'top') and hasattr(shape, 'width') and hasattr(shape, 'height'):
-                slide_width = shape.slide.slide_dimensions.width
-                slide_height = shape.slide.slide_dimensions.height
-                
-                # 如果形状完全在幻灯片外，则视为隐藏
-                if (shape.left > slide_width or 
-                    shape.top > slide_height or
-                    shape.left + shape.width < 0 or
-                    shape.top + shape.height < 0):
-                    return True
-                    
-            # 检查形状透明度
-            if hasattr(shape, 'fill') and hasattr(shape.fill, 'transparency'):
-                if shape.fill.transparency > 0.8:  # 如果透明度很高，可能是隐藏元素
-                    return True
-                    
-            # 检查形状是否为隐藏的图标或装饰性元素
-            if shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE:
-                if hasattr(shape, 'auto_shape_type'):
-                    # 跳过常见的装饰性形状
-                    if shape.auto_shape_type in [
-                        MSO_AUTO_SHAPE_TYPE.OVAL, 
-                        MSO_AUTO_SHAPE_TYPE.RECTANGLE,
-                        MSO_AUTO_SHAPE_TYPE.ROUNDED_RECTANGLE,
-                        MSO_AUTO_SHAPE_TYPE.ISOSCELES_TRIANGLE,
-                        MSO_AUTO_SHAPE_TYPE.RIGHT_TRIANGLE,
-                        MSO_AUTO_SHAPE_TYPE.PARALLELOGRAM,
-                        MSO_AUTO_SHAPE_TYPE.TRAPEZOID,
-                        MSO_AUTO_SHAPE_TYPE.DIAMOND,
-                        MSO_AUTO_SHAPE_TYPE.PENTAGON,
-                        MSO_AUTO_SHAPE_TYPE.HEXAGON,
-                        MSO_AUTO_SHAPE_TYPE.OCTAGON,
-                        MSO_AUTO_SHAPE_TYPE.STAR_10_POINT,
-                        MSO_AUTO_SHAPE_TYPE.STAR_12_POINT,
-                        MSO_AUTO_SHAPE_TYPE.STAR_16_POINT,
-                        MSO_AUTO_SHAPE_TYPE.STAR_24_POINT,
-                        MSO_AUTO_SHAPE_TYPE.STAR_32_POINT,
-                        MSO_AUTO_SHAPE_TYPE.STAR_4_POINT,
-                        MSO_AUTO_SHAPE_TYPE.STAR_5_POINT,
-                        MSO_AUTO_SHAPE_TYPE.STAR_6_POINT,
-                        MSO_AUTO_SHAPE_TYPE.STAR_7_POINT,
-                        MSO_AUTO_SHAPE_TYPE.STAR_8_POINT
-                    ]:
-                        # 检查形状是否很小（可能是装饰性图标）
-                        if shape.width < 0.5 * inch and shape.height < 0.5 * inch:
-                            return True
-                            
-            return False
-        except Exception:
-            # 如果检查过程中出现异常，默认不隐藏
-            return False
-    
-    def _get_shape_position(self, shape) -> Dict[str, float]:
-        """
-        获取形状的位置和大小信息
-        Args:
-            shape: PPT形状对象
-        Returns:
-            Dict: 包含位置和大小信息的字典
-        """
-        try:
-            return {
-                'left': shape.left,
-                'top': shape.top,
-                'width': shape.width,
-                'height': shape.height
-            }
-        except Exception:
-            # 如果获取失败，返回默认值
-            return {
-                'left': 0,
-                'top': 0,
-                'width': 100,
-                'height': 100
-            }
-    
-    def _get_text_formatting(self, shape) -> Dict[str, Any]:
-        """
-        获取文本格式信息
-        Args:
-            shape: PPT形状对象
-        Returns:
-            Dict: 包含文本格式信息的字典
-        """
-        try:
-            formatting = {
-                'font_name': 'Helvetica',
-                'font_size': 12,
-                'bold': False,
-                'italic': False,
-                'color': (0, 0, 0),  # 默认黑色
-                'alignment': TA_LEFT
-            }
-            
-            if shape.has_text_frame and shape.text_frame.paragraphs:
-                # 获取第一个段落的格式作为代表
-                paragraph = shape.text_frame.paragraphs[0]
-                if paragraph.runs:
-                    run = paragraph.runs[0]
-                    
-                    # 获取字体信息
-                    if hasattr(run, 'font'):
-                        if run.font.name:
-                            formatting['font_name'] = run.font.name
-                        if run.font.size:
-                            formatting['font_size'] = run.font.size.pt
-                        if run.font.bold:
-                            formatting['bold'] = run.font.bold
-                        if run.font.italic:
-                            formatting['italic'] = run.font.italic
-                        
-                        # 获取字体颜色
-                        if run.font.color and run.font.color.type == MSO_THEME_COLOR_INDEX.RGB:
-                            formatting['color'] = (
-                                run.font.color.rgb.red,
-                                run.font.color.rgb.green,
-                                run.font.color.rgb.blue
-                            )
-                    
-                    # 获取对齐方式
-                    if hasattr(paragraph, 'alignment') and paragraph.alignment:
-                        alignment_map = {
-                            0: TA_LEFT,
-                            1: TA_CENTER,
-                            2: TA_RIGHT,
-                            3: TA_JUSTIFY
-                        }
-                        formatting['alignment'] = alignment_map.get(paragraph.alignment, TA_LEFT)
-            
-            return formatting
-        except Exception:
-            # 如果获取失败，返回默认格式
-            return {
-                'font_name': 'Helvetica',
-                'font_size': 12,
-                'bold': False,
-                'italic': False,
-                'color': (0, 0, 0),
-                'alignment': TA_LEFT
-            }
-    
-    def _invoke(self, tool_parameters: dict[str, Any]) -> Generator[ToolInvokeMessage]:
-        try:
-            # Get parameters
-            file = tool_parameters.get("input_file")
-            
-            if not file:
-                yield self.create_text_message("Error: Missing required parameter 'input_file'")
-                return
-                
-            # Get file info
-            file_info = self.get_file_info(file)
-                
-            # Create temporary directory for output
             with tempfile.TemporaryDirectory() as temp_dir:
-                # Save uploaded file to temp directory
-                input_path = os.path.join(temp_dir, file_info["filename"])
-                with open(input_path, 'wb') as f:
-                    f.write(file.blob)
+                # 准备文件
+                input_path = os.path.join(temp_dir, input_file.filename)
+                with open(input_path, "wb") as f:
+                    f.write(input_file.blob)
                 
-                # Update file info with the actual path
-                file_info["path"] = input_path
-                
-                # Validate input file format
-                if not self._validate_input_file(file_info):
-                    yield self.create_text_message("Error: Invalid file format or missing dependencies. Only .pptx files are supported (not .ppt), and python-pptx with reportlab is required.".encode('utf-8', errors='replace').decode('utf-8'))
+                output_filename = os.path.splitext(input_file.filename)[0] + ".pdf"
+                output_path = os.path.join(temp_dir, output_filename)
+
+                # 执行核心转换
+                converter = PptPdfEngine(input_path, output_path)
+                result = converter.convert()
+
+                if not result["success"]:
+                    yield self.create_text_message(f"Conversion Failed: {result['message']}")
                     return
-                    
-                # Process conversion
-                result = self._process_conversion(file_info, temp_dir)
-                
-                if result["success"]:
-                    # Send output files
-                    for file_info in result["output_files"]:
-                        try:
-                            # Use the pre-read content
-                            if "content" in file_info:
-                                yield self.create_blob_message(
-                                    blob=file_info["content"], 
-                                    meta={
-                                        "filename": file_info["filename"],
-                                        "mime_type": "application/pdf"
-                                    }
-                                )
-                            else:
-                                yield self.create_text_message(f"Error: No content available for file {file_info.get('filename', 'unknown')}")
-                        except Exception as e:
-                            yield self.create_text_message(f"Error sending file: {str(e)}")
-                    
-                    # Send text message with conversion details
-                    yield self.create_text_message(f"PPT converted to PDF successfully: {result['message']}".encode('utf-8', errors='replace').decode('utf-8'))
-                    
-                else:
-                    # Send error message
-                    yield self.create_text_message(f"Conversion failed: {result['message']}".encode('utf-8', errors='replace').decode('utf-8'))
-                    
+
+                # 返回结果
+                with open(output_path, 'rb') as f:
+                    pdf_content = f.read()
+
+                yield self.create_text_message("PPT conversion successful.")
+                yield self.create_blob_message(
+                    blob=pdf_content,
+                    meta={
+                        "filename": output_filename,
+                        "mime_type": "application/pdf"
+                    }
+                )
+
         except Exception as e:
-            yield self.create_text_message(f"Error during PPT to PDF conversion: {str(e)}".encode('utf-8', errors='replace').decode('utf-8'))
-    
-    def _validate_input_file(self, file_info: dict) -> bool:
-        """Validate if the input file format is supported for PPT to PDF conversion."""
-        # Check file extension
-        if not file_info["extension"].lower().endswith('.pptx'):
-            return False
-            
-        # Check if python-pptx and reportlab are available
-        if not PPTX_REPORTLAB_AVAILABLE:
-            return False
-            
-        # Try to load the file with python-pptx to verify it's a valid PPT file
-        if "path" in file_info:
-            try:
-                prs = Presentation(file_info["path"])
-                # Just access the slides to verify the file is readable
-                _ = list(prs.slides)
-                return True
-            except Exception as e:
-                return False
-        
-        # If path not available, just check file extension and dependencies
-        return True
-    
-    def _process_conversion(self, file_info: Dict[str, Any], temp_dir: str) -> Dict[str, Any]:
-        """Process the PowerPoint to PDF conversion using python-pptx and reportlab with improved layout preservation."""
-        input_path = file_info["path"]
-        output_files = []
-        
+            import traceback
+            traceback.print_exc()
+            yield self.create_text_message(f"System Error: {str(e)}")
+
+class PptPdfEngine:
+    """
+    PPT转换引擎核心类
+    """
+    def __init__(self, input_path: str, output_path: str):
+        self.input_path = input_path
+        self.output_path = output_path
+        self.font_name = "CustomChineseFont"
+        self.font_bold_name = "CustomChineseFont" 
+        self._register_fonts()
+
+    def _register_fonts(self):
+        """注册字体，路径策略与Excel插件保持一致"""
         try:
-            # Generate output file path
-            base_name = os.path.splitext(os.path.basename(input_path))[0]
-            output_path = os.path.join(temp_dir, f"{base_name}.pdf")
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            # 假设字体在 tools 同级的 fonts 目录
+            font_path = os.path.join(os.path.dirname(current_dir), "fonts", "chinese_font.ttc")
             
-            # Check if python-pptx and reportlab are available
-            if not PPTX_REPORTLAB_AVAILABLE:
-                return {"success": False, "message": "Required libraries (python-pptx and reportlab) are not available. Please install them to use this tool.".encode('utf-8', errors='replace').decode('utf-8')}
-            
-            # Register Chinese fonts
-            self._register_chinese_fonts()
-            
-            # Open the PowerPoint presentation
-            prs = Presentation(input_path)
-            
-            # Get slide dimensions to maintain aspect ratio
-            # For pptx, we need to get the dimensions from the presentation
-            slide_width = prs.slide_width
-            slide_height = prs.slide_height
-            
-            # Create PDF with the same aspect ratio as the PPT
-            # Convert from EMUs to points (1 inch = 72 points = 914400 EMUs)
-            pdf_width = slide_width / 12700  # Convert EMUs to points
-            pdf_height = slide_height / 12700  # Convert EMUs to points
-            
-            # Create PDF with custom pagesize matching PPT dimensions
-            c = canvas.Canvas(output_path, pagesize=(pdf_width, pdf_height))
-            
-            # Process each slide
-            for slide_idx, slide in enumerate(prs.slides):
-                # Add a new page for each slide (except the first one)
-                if slide_idx > 0:
-                    c.showPage()
-                
-                # Process shapes in order, maintaining their original positions
-                # First, collect all non-hidden shapes
-                visible_shapes = []
-                for shape in slide.shapes:
-                    # Skip hidden shapes
-                    if self._is_hidden_shape(shape):
-                        continue
-                    visible_shapes.append(shape)
-                
-                # Process shapes by type to maintain proper layering
-                # Background first, then shapes, then text on top
-                background_shapes = []
-                image_shapes = []
-                table_shapes = []
-                text_shapes = []
-                
-                for shape in visible_shapes:
-                    if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-                        image_shapes.append(shape)
-                    elif shape.has_table:
-                        table_shapes.append(shape)
-                    elif shape.has_text_frame:
-                        text_shapes.append(shape)
-                    else:
-                        background_shapes.append(shape)
-                
-                # Process shapes in order: background, images, tables, text
-                for shape_list in [background_shapes, image_shapes, table_shapes, text_shapes]:
-                    for shape in shape_list:
-                        try:
-                            # Get shape position
-                            pos = self._get_shape_position(shape)
-                            
-                            # Convert PPT coordinates to PDF coordinates
-                            # PPT origin is top-left, PDF origin is bottom-left
-                            x = pos['left'] / 12700  # Convert EMUs to points
-                            y = pdf_height - (pos['top'] / 12700) - (pos['height'] / 12700)  # Flip Y-axis
-                            width = pos['width'] / 12700  # Convert EMUs to points
-                            height = pos['height'] / 12700  # Convert EMUs to points
-                            
-                            # Text frames
-                            if shape.has_text_frame:
-                                text = shape.text_frame.text
-                                if text.strip():
-                                    # Get text formatting
-                                    formatting = self._get_text_formatting(shape)
-                                    
-                                    # Set font
-                                    font_name = formatting['font_name']
-                                    font_size = formatting['font_size']
-                                    
-                                    # Try to use registered Chinese fonts
-                                    try:
-                                        if "ChineseFont" in pdfmetrics.getRegisteredFontNames():
-                                            font_name = "ChineseFont"
-                                        elif "SimSun" in pdfmetrics.getRegisteredFontNames():
-                                            font_name = "SimSun"
-                                        elif "Microsoft YaHei" in pdfmetrics.getRegisteredFontNames():
-                                            font_name = "Microsoft YaHei"
-                                    except:
-                                        font_name = "Helvetica"
-                                    
-                                    # Set font and color
-                                    c.setFont(font_name, font_size)
-                                    c.setFillColorRGB(*[c/255.0 for c in formatting['color']])
-                                    
-                                    # Process text line by line
-                                    lines = text.split('\n')
-                                    line_height = font_size * 1.2  # Line height is 1.2 times font size
-                                    
-                                    for i, line in enumerate(lines):
-                                        if line.strip():
-                                            # Calculate Y position for this line
-                                            line_y = y + height - (i + 1) * line_height
-                                            
-                                            # Ensure text is properly encoded
-                                            try:
-                                                safe_line = line.encode('utf-8', errors='replace').decode('utf-8')
-                                                c.drawString(x, line_y, safe_line)
-                                            except Exception:
-                                                safe_line = str(line).encode('utf-8', errors='replace').decode('utf-8')
-                                                c.drawString(x, line_y, safe_line)
-                            
-                            # Tables
-                            elif shape.has_table:
-                                table = shape.table
-                                table_data = []
-                                
-                                # Extract table data
-                                for row_idx, row in enumerate(table.rows):
-                                    row_data = []
-                                    for cell_idx, cell in enumerate(row.cells):
-                                        try:
-                                            cell_text = cell.text_frame.text
-                                            safe_text = cell_text.encode('utf-8', errors='replace').decode('utf-8')
-                                            row_data.append(safe_text)
-                                        except Exception:
-                                            row_data.append("")
-                                    table_data.append(row_data)
-                                
-                                # Create a ReportLab table
-                                if table_data:
-                                    # Calculate column widths
-                                    cols = len(table_data[0])
-                                    col_widths = [width / cols] * cols
-                                    
-                                    # Create table
-                                    rl_table = Table(table_data, colWidths=col_widths)
-                                    rl_table.setStyle(TableStyle([
-                                        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                                        ('FONTNAME', (0, 0), (-1, 0), 'ChineseFont-Bold'),
-                                        ('FONTSIZE', (0, 0), (-1, 0), 12),
-                                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                                        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-                                        ('FONTNAME', (0, 1), (-1, -1), 'ChineseFont'),
-                                        ('FONTSIZE', (0, 1), (-1, -1), 10),
-                                        ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                                        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                                    ]))
-                                    
-                                    # Draw the table
-                                    table_width, table_height = rl_table.wrapOn(c, width, height)
-                                    rl_table.drawOn(c, x, y)
-                            
-                            # Images
-                            elif shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-                                try:
-                                    # Get image data
-                                    image_bytes = shape.image.blob
-                                    
-                                    # Create a temporary image file
-                                    img_stream = io.BytesIO(image_bytes)
-                                    img_reader = ImageReader(img_stream)
-                                    
-                                    # Draw the image at the same position and size
-                                    c.drawImage(img_reader, x, y, width=width, height=height)
-                                except Exception as e:
-                                    print(f"Error processing image: {str(e)}")
-                                    continue
-                            
-                            # Other shapes (rectangles, circles, etc.)
-                            else:
-                                try:
-                                    # Get fill color
-                                    fill_color = colors.white
-                                    if hasattr(shape, 'fill') and hasattr(shape.fill, 'fore_color'):
-                                        if shape.fill.fore_color.type == MSO_THEME_COLOR_INDEX.RGB:
-                                            fill_color = (
-                                                shape.fill.fore_color.rgb.red / 255.0,
-                                                shape.fill.fore_color.rgb.green / 255.0,
-                                                shape.fill.fore_color.rgb.blue / 255.0
-                                            )
-                                    
-                                    # Get line color
-                                    line_color = colors.black
-                                    line_width = 1
-                                    if hasattr(shape, 'line') and hasattr(shape.line, 'color'):
-                                        if shape.line.color.type == MSO_THEME_COLOR_INDEX.RGB:
-                                            line_color = (
-                                                shape.line.color.rgb.red / 255.0,
-                                                shape.line.color.rgb.green / 255.0,
-                                                shape.line.color.rgb.blue / 255.0
-                                            )
-                                        if hasattr(shape.line, 'width'):
-                                            line_width = shape.line.width.pt
-                                    
-                                    # Set fill and line colors
-                                    c.setFillColorRGB(*fill_color)
-                                    c.setStrokeColorRGB(*line_color)
-                                    c.setLineWidth(line_width)
-                                    
-                                    # Draw the shape based on its type
-                                    if shape.shape_type == MSO_SHAPE_TYPE.RECTANGLE:
-                                        c.rect(x, y, width, height, fill=1, stroke=1)
-                                    elif shape.shape_type == MSO_SHAPE_TYPE.OVAL:
-                                        c.ellipse(x, y, width, height, fill=1, stroke=1)
-                                    elif shape.shape_type == MSO_SHAPE_TYPE.LINE:
-                                        # For lines, we need start and end points
-                                        if hasattr(shape, 'x1') and hasattr(shape, 'y1') and hasattr(shape, 'x2') and hasattr(shape, 'y2'):
-                                            x1 = shape.x1 / 12700
-                                            y1 = pdf_height - (shape.y1 / 12700)
-                                            x2 = shape.x2 / 12700
-                                            y2 = pdf_height - (shape.y2 / 12700)
-                                            c.line(x1, y1, x2, y2)
-                                        else:
-                                            # Default to drawing a line from bottom-left to top-right of the shape bounds
-                                            c.line(x, y, x + width, y + height)
-                                    else:
-                                        # For other shape types, draw a rectangle as fallback
-                                        c.rect(x, y, width, height, fill=1, stroke=1)
-                                except Exception as e:
-                                    print(f"Error processing shape: {str(e)}")
-                                    continue
-                        except Exception as e:
-                            print(f"Error processing shape: {str(e)}")
-                            continue
-            
-            # Save the PDF
-            c.save()
-            
-            # Wait for file to be fully written
-            time.sleep(2)
-            
-            # Try multiple times to read the file
-            file_content = None
-            for attempt in range(3):
-                try:
-                    with open(output_path, 'rb') as f:
-                        file_content = f.read()
-                    break
-                except Exception as e:
-                    if attempt < 2:
-                        time.sleep(2)
-                    else:
-                        return {"success": False, "message": f"Error reading converted file: {str(e)}".encode('utf-8', errors='replace').decode('utf-8')}
-            
-            if file_content:
-                # Ensure filename and path are properly UTF-8 encoded
-                safe_filename = f"{base_name}.pdf".encode('utf-8', errors='replace').decode('utf-8')
-                safe_path = output_path.encode('utf-8', errors='replace').decode('utf-8')
-                
-                output_files.append({
-                    "path": safe_path,
-                    "content": file_content,
-                    "filename": safe_filename
-                })
+            if not os.path.exists(font_path):
+                # 备用：当前目录 fonts/
+                font_path = os.path.join(current_dir, "fonts", "chinese_font.ttc")
+
+            if os.path.exists(font_path):
+                pdfmetrics.registerFont(TTFont(self.font_name, font_path))
+                # 简单的粗体映射
+                pdfmetrics.registerFont(TTFont(self.font_bold_name, font_path)) 
             else:
-                return {"success": False, "message": "Failed to read converted file after multiple attempts".encode('utf-8', errors='replace').decode('utf-8')}
-            
-            return {
-                "success": True, 
-                "message": "PowerPoint presentation converted to PDF successfully with improved layout preservation".encode('utf-8', errors='replace').decode('utf-8'),
-                "output_files": output_files
-            }
-                
+                print("Warning: Chinese font not found, falling back to Helvetica")
+                self.font_name = "Helvetica"
+                self.font_bold_name = "Helvetica-Bold"
         except Exception as e:
-            return {"success": False, "message": f"Conversion error: {str(e)}".encode('utf-8', errors='replace').decode('utf-8')}
+            print(f"Font registration error: {e}")
+            self.font_name = "Helvetica"
+            self.font_bold_name = "Helvetica-Bold"
+
+    def convert(self) -> Dict[str, Any]:
+        try:
+            prs = Presentation(self.input_path)
+            
+            # 获取PPT尺寸并转换为PDF点数
+            slide_width_pt = prs.slide_width * EMU_TO_PT
+            slide_height_pt = prs.slide_height * EMU_TO_PT
+            
+            c = canvas.Canvas(self.output_path, pagesize=(slide_width_pt, slide_height_pt))
+            
+            for slide in prs.slides:
+                # 绘制每张幻灯片
+                self._process_slide(c, slide, slide_height_pt)
+                c.showPage()
+            
+            c.save()
+            return {"success": True, "message": "OK"}
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            # 打印更详细的错误堆栈以便调试
+            return {"success": False, "message": f"Convert Error: {str(e)}"}
+
+    def _process_slide(self, c: canvas.Canvas, slide: Any, page_height: float):
+        """处理单个幻灯片"""
+        # 1. 绘制背景
+        try:
+            bg = slide.background
+            # 只有当背景填充明确定义时才绘制
+            if bg and bg.fill and bg.fill.type: 
+                color = self._get_solid_fill_color(bg.fill)
+                if color:
+                    c.setFillColor(color)
+                    c.rect(0, 0, c._pagesize[0], c._pagesize[1], fill=1, stroke=0)
+        except:
+            pass
+
+        # 2. 递归绘制所有形状
+        if slide.shapes:
+            for shape in slide.shapes:
+                self._render_shape_recursive(c, shape, 0, 0, page_height)
+
+    def _render_shape_recursive(self, c: canvas.Canvas, shape: Any, x_offset: float, y_offset: float, page_height: float):
+        """
+        递归渲染形状
+        """
+        # 跳过不可见元素
+        if hasattr(shape, 'visible') and not shape.visible:
+            return
+
+        # 获取绝对坐标 (EMU)
+        try:
+             # 如果是组合里的子元素，left/top 是相对组合左上角的
+            current_x_emu = x_offset + shape.left
+            current_y_emu = y_offset + shape.top
+        except AttributeError:
+            return
+
+        # 1. 处理组合形状 (Group)
+        if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+            for sub_shape in shape.shapes:
+                self._render_shape_recursive(c, sub_shape, current_x_emu, current_y_emu, page_height)
+            return
+
+        # 转换坐标为 PDF Point
+        x = current_x_emu * EMU_TO_PT
+        w = shape.width * EMU_TO_PT
+        h = shape.height * EMU_TO_PT
+        y = page_height - (current_y_emu * EMU_TO_PT) - h 
+
+        # 2. 处理文本框 (Text Box)
+        if shape.has_text_frame and shape.text_frame.text.strip():
+            self._draw_shape_background(c, shape, x, y, w, h)
+            self._draw_smart_text_box(c, shape, x, y, w, h)
+        
+        # 3. 处理表格 (Table)
+        elif shape.has_table:
+            self._draw_exact_table(c, shape.table, x, y, w, h, page_height)
+
+        # 4. 处理图片 (Picture)
+        elif shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+            try:
+                image_blob = shape.image.blob
+                img_reader = ImageReader(io.BytesIO(image_blob))
+                # mask='auto' 处理透明背景png
+                c.drawImage(img_reader, x, y, width=w, height=h, mask='auto', preserveAspectRatio=True)
+            except Exception as e:
+                print(f"Image render error: {e}")
+                
+        # 5. 其他几何形状
+        elif shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE:
+             self._draw_shape_background(c, shape, x, y, w, h)
+
+    def _draw_shape_background(self, c: canvas.Canvas, shape: Any, x, y, w, h):
+        """绘制形状背景和边框"""
+        fill_color = None
+        line_color = None
+        line_width = 0
+
+        # 获取填充颜色
+        if hasattr(shape, 'fill'):
+            fill_color = self._get_solid_fill_color(shape.fill)
+
+        # 获取边框颜色
+        if hasattr(shape, 'line') and shape.line.fill: # 注意：line.fill 才是颜色源
+             line_color = self._get_solid_fill_color(shape.line.fill)
+             if hasattr(shape.line, 'width') and shape.line.width:
+                 line_width = shape.line.width.pt
+
+        if fill_color or (line_color and line_width > 0):
+            if fill_color:
+                c.setFillColor(fill_color)
+            else:
+                c.setFillColor(colors.Color(0,0,0,alpha=0)) # 透明填充
+
+            if line_color and line_width > 0:
+                c.setStrokeColor(line_color)
+                c.setLineWidth(line_width)
+            else:
+                c.setStrokeColor(colors.Color(0,0,0,alpha=0)) # 无边框
+            
+            # 绘制矩形（简化处理几何形状）
+            c.rect(x, y, w, h, fill=1 if fill_color else 0, stroke=1 if line_color else 0)
+
+    def _draw_smart_text_box(self, c: canvas.Canvas, shape: Any, x, y, w, h):
+        """
+        使用 ReportLab Paragraph 实现自动换行的文本框
+        """
+        text_frame = shape.text_frame
+        styles = getSampleStyleSheet()
+        flowables = []
+        
+        for paragraph in text_frame.paragraphs:
+            # 即使是空行也需要保留占位
+            if not paragraph.text and not paragraph.runs:
+                flowables.append(Paragraph("<br/>", styles["Normal"]))
+                continue
+
+            font_size = 12
+            font_color = colors.black
+            
+            # 尝试从第一个 run 获取样式
+            if paragraph.runs:
+                run = paragraph.runs[0]
+                if run.font.size:
+                    font_size = run.font.size.pt
+                
+                # 【修复点】使用 MSO_COLOR_TYPE 判断
+                if run.font.color and run.font.color.type == MSO_COLOR_TYPE.RGB:
+                     font_color = self._rgb_to_color(run.font.color.rgb)
+            
+            # 样式定义
+            style = ParagraphStyle(
+                name=f'P_{id(paragraph)}',
+                parent=styles['Normal'],
+                fontName=self.font_name,
+                fontSize=font_size,
+                textColor=font_color,
+                leading=font_size * 1.2,
+                wordWrap='CJK' 
+            )
+            
+            # 文本内容清洗
+            raw_text = paragraph.text if paragraph.text else ""
+            if not raw_text.strip():
+                # 如果只有空格或空
+                flowables.append(Paragraph("<br/>", style))
+                continue
+                
+            text_content = raw_text.replace('\n', '<br/>')
+            text_content = text_content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            
+            flowables.append(Paragraph(text_content, style))
+
+        if not flowables:
+            return
+
+        # 计算 Frame 内补白
+        padding = 2
+        # 使用 Frame + KeepInFrame 控制边界
+        frame = Frame(x, y, w, h, showBoundary=0, topPadding=padding, leftPadding=padding, rightPadding=padding, bottomPadding=padding)
+        story = [KeepInFrame(w - 2*padding, h - 2*padding, flowables, mode='shrink')]
+        frame.addFromList(story, c)
+
+    def _draw_exact_table(self, c: canvas.Canvas, ppt_table: Any, x, y, w, h, page_height):
+        """绘制表格"""
+        if not ppt_table.rows:
+            return
+
+        data = []
+        row_heights = []
+        
+        for row in ppt_table.rows:
+            row_data = []
+            row_heights.append(row.height * EMU_TO_PT)
+            for cell in row.cells:
+                text = ""
+                if cell.text_frame and cell.text_frame.text:
+                    text = cell.text_frame.text.strip()
+                row_data.append(text)
+            data.append(row_data)
+
+        col_widths = [col.width * EMU_TO_PT for col in ppt_table.columns]
+
+        processed_data = []
+        base_style = ParagraphStyle(
+            name='TableBase', 
+            fontName=self.font_name, 
+            fontSize=10, 
+            leading=11,
+            textColor=colors.black,
+            wordWrap='CJK'
+        )
+
+        for row in data:
+            new_row = []
+            for cell_text in row:
+                safe_text = cell_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                new_row.append(Paragraph(safe_text, base_style))
+            processed_data.append(new_row)
+
+        rl_table = Table(processed_data, colWidths=col_widths, rowHeights=row_heights)
+        
+        tbl_style = TableStyle([
+            ('FONTNAME', (0, 0), (-1, -1), self.font_name),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ])
+        rl_table.setStyle(tbl_style)
+
+        # 绘制位置计算
+        # ReportLab wrap 返回建议宽高
+        t_w, t_h = rl_table.wrap(w, h)
+        
+        # PPT 表格坐标是左上角 (x, y)，高度 h
+        # PDF 下方坐标是 top_y - actual_height
+        top_y = y + h 
+        # 这里 t_h 即表格总高，通常应该等于 sum(row_heights)
+        draw_y = top_y - t_h 
+        
+        rl_table.drawOn(c, x, draw_y)
+
+    # --- 辅助函数 ---
+
+    def _get_solid_fill_color(self, fill_obj):
+        """
+        通用获取颜色函数：支持 SolidFill, Line Properties 等
+        """
+        try:
+            # case 1: 直接是 RGB 颜色
+            if fill_obj.type == MSO_COLOR_TYPE.RGB: # 【修复点】使用 MSO_COLOR_TYPE
+                return self._rgb_to_color(fill_obj.rgb)
+            # case 2: 是 fore_color 属性 (常见于 Shape.fill)
+            elif hasattr(fill_obj, 'fore_color'):
+                if fill_obj.fore_color.type == MSO_COLOR_TYPE.RGB: # 【修复点】
+                    return self._rgb_to_color(fill_obj.fore_color.rgb)
+            # case 3: 纯色填充特定检查 (SolidFill)
+            elif hasattr(fill_obj, 'solid'):
+                 if fill_obj.fore_color.type == MSO_COLOR_TYPE.RGB: # 【修复点】
+                    return self._rgb_to_color(fill_obj.fore_color.rgb)
+        except Exception:
+            pass
+        return None
+
+    def _rgb_to_color(self, rgb):
+        try:
+            return colors.Color(rgb[0]/255.0, rgb[1]/255.0, rgb[2]/255.0)
+        except:
+            return colors.black
