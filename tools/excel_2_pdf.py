@@ -1,379 +1,403 @@
 import os
 import tempfile
 import time
-from collections.abc import Generator
-from typing import Any, Dict, Optional
-import json
+from typing import Any, Dict, List, Generator, Tuple, Optional
+import copy
 
 from dify_plugin import Tool
 from dify_plugin.entities.tool import ToolInvokeMessage
 from dify_plugin.file.file import File
 
+# 导入依赖库，包含错误处理
 try:
     import openpyxl
-    from reportlab.lib.pagesizes import letter, A4
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from openpyxl.utils import get_column_letter
     from reportlab.lib import colors
-    from reportlab.lib.units import inch
+    from reportlab.lib.pagesizes import A4, landscape, portrait
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch, mm
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
     from reportlab.lib.enums import TA_CENTER, TA_LEFT
-    OPENPYXL_REPORTLAB_AVAILABLE = True
+    DEPENDENCIES_AVAILABLE = True
 except ImportError:
-    # Fallback for environments without openpyxl and reportlab
-    OPENPYXL_REPORTLAB_AVAILABLE = False
+    DEPENDENCIES_AVAILABLE = False
 
 class ExcelToPdfTool(Tool):
-    """Tool for converting Excel documents to PDF format."""
-    
-    def get_file_info(self, file: File) -> dict:
-        """
-        获取文件信息
-        Args:
-            file: 文件对象
-        Returns:
-            文件信息字典
-        """
-        file_info = {
-            "filename": file.filename,
-            "extension": file.extension,
-            "mime_type": file.mime_type,
-            "size": file.size,
-            "url": file.url
-        }
-        
-        # Add path attribute if it exists (for MockFile in testing)
-        if hasattr(file, 'path'):
-            file_info["path"] = file.path
-            
-        return file_info
-    
-    def _invoke(self, tool_parameters: dict[str, Any]) -> Generator[ToolInvokeMessage]:
+    """
+    Excel to PDF Converter with Smart Layout Engine.
+    Features: Auto-sizing, Landscape support, Table splitting for wide columns.
+    """
+
+    def _invoke(self, tool_parameters: dict[str, Any]) -> Generator[ToolInvokeMessage, None, None]:
+        if not DEPENDENCIES_AVAILABLE:
+            yield self.create_text_message("Error: Required libraries (openpyxl, reportlab) are missing.")
+            return
+
+        input_file = tool_parameters.get("input_file")
+        if not input_file:
+            yield self.create_text_message("Error: Input file is required.")
+            return
+
+        # 1. 验证文件格式
+        if not input_file.extension or input_file.extension.lower() not in ['.xlsx']:
+            yield self.create_text_message("Error: Only .xlsx files are supported.")
+            return
+
         try:
-            # Get parameters
-            file = tool_parameters.get("input_file")
-            
-            if not file:
-                yield self.create_text_message("Error: Missing required parameter 'input_file'")
-                return
-                
-            # Get file info
-            file_info = self.get_file_info(file)
-            if not file_info:
-                yield self.create_text_message("Error: Invalid file")
-                return
-                
-            # Validate input file format
-            if not self._validate_input_file(file_info["extension"]):
-                yield self.create_text_message("Error: Invalid file format. Only .xlsx files are supported (not .xls)")
-                return
-                
-            # Create temporary directory for output
             with tempfile.TemporaryDirectory() as temp_dir:
-                # Save the uploaded file to temp directory
-                input_path = os.path.join(temp_dir, file_info["filename"])
+                # 2. 准备文件
+                input_path = os.path.join(temp_dir, input_file.filename)
                 with open(input_path, "wb") as f:
-                    f.write(file.blob)
+                    f.write(input_file.blob)
                 
-                # Update file_info with the actual path
-                file_info["path"] = input_path
+                output_filename = os.path.splitext(input_file.filename)[0] + ".pdf"
+                output_path = os.path.join(temp_dir, output_filename)
+
+                # 3. 执行转换核心逻辑
+                converter = ExcelPdfConverter(input_path, output_path)
+                result = converter.convert()
+
+                if not result["success"]:
+                    yield self.create_text_message(f"Conversion Failed: {result['message']}")
+                    return
+
+                # 4. 读取并返回结果
+                with open(output_path, 'rb') as f:
+                    pdf_content = f.read()
+
+                yield self.create_text_message("Conversion successful with smart layout optimization.")
                 
-                # Process conversion
-                result = self._process_conversion(input_path, temp_dir)
-                
-                if result["success"]:
-                    # Create output file info
-                    output_files = []
-                    for output_file_info in result["output_files"]:
-                        output_files.append({
-                            "filename": output_file_info["filename"],
-                            "size": len(output_file_info["content"]),
-                            "path": output_file_info["path"]
-                        })
-                    
-                    # Create JSON response
-                    json_response = {
-                        "success": True,
-                        "conversion_type": "excel_2_pdf",
-                        "input_file": file_info,
-                        "output_files": output_files,
-                        "message": result["message"]
+                yield self.create_blob_message(
+                    blob=pdf_content,
+                    meta={
+                        "filename": output_filename,
+                        "mime_type": "application/pdf"
                     }
-                    
-                    # Send text message
-                    yield self.create_text_message(f"Excel converted to PDF successfully: {result['message']}")
-                    
-                    # Send JSON message
-                    yield self.create_json_message(json_response)
-                    
-                    # Send output files
-                    for output_file_info in result["output_files"]:
-                        try:
-                            # Use the pre-read content
-                            if "content" in output_file_info:
-                                yield self.create_blob_message(
-                                    blob=output_file_info["content"], 
-                                    meta={
-                                        "filename": output_file_info["filename"],
-                                        "mime_type": "application/pdf"
-                                    }
-                                )
-                            else:
-                                yield self.create_text_message(f"Error: No content available for file {output_file_info.get('filename', 'unknown')}")
-                        except Exception as e:
-                            yield self.create_text_message(f"Error sending file: {str(e)}")
-                else:
-                    # Send error message
-                    yield self.create_text_message(f"Conversion failed: {result['message']}")
-                    
+                )
+
         except Exception as e:
-            yield self.create_text_message(f"Error during conversion: {str(e)}")
-    
-    def _validate_input_file(self, file_extension: str) -> bool:
-        """Validate if the input file format is supported for Excel to PDF conversion."""
-        return file_extension.lower() in [".xlsx"]
-    
-    def _register_chinese_fonts(self):
-        """Register Chinese fonts for PDF generation."""
-        try:
-            # Get the directory of the current script
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            # Get the parent directory (tools) and then the fonts directory
-            fonts_dir = os.path.join(os.path.dirname(current_dir), "fonts")
-            
-            # Common Chinese font paths in Windows and project fonts
-            font_paths = [
-                # Project Chinese font (highest priority)
-                (os.path.join(fonts_dir, "chinese_font.ttc"), "ChineseFont"),
-                # SimSun (宋体)
-                ("C:/Windows/Fonts/simsun.ttc", "SimSun"),
-                ("C:/Windows/Fonts/simsun.ttf", "SimSun"),
-                # SimHei (黑体)
-                ("C:/Windows/Fonts/simhei.ttf", "SimHei"),
-                # SimHei Bold - Note: Windows typically doesn't have a separate SimHei-Bold file
-                # We'll use the same font file for both normal and bold styles
-                ("C:/Windows/Fonts/simhei.ttf", "SimHei-Bold"),
-                # Microsoft YaHei (微软雅黑)
-                ("C:/Windows/Fonts/msyh.ttc", "MicrosoftYaHei"),
-                ("C:/Windows/Fonts/msyh.ttf", "MicrosoftYaHei"),
-                # Microsoft YaHei Bold
-                ("C:/Windows/Fonts/msyhbd.ttc", "MicrosoftYaHei-Bold"),
-                ("C:/Windows/Fonts/msyhbd.ttf", "MicrosoftYaHei-Bold"),
-                # KaiTi (楷体)
-                ("C:/Windows/Fonts/simkai.ttf", "KaiTi"),
-                # FangSong (仿宋)
-                ("C:/Windows/Fonts/simfang.ttf", "FangSong"),
-                # SimSun Bold
-                ("C:/Windows/Fonts/simsunb.ttf", "SimSun-Bold"),
-            ]
-            
-            # Track if any Chinese fonts were successfully registered
-            chinese_fonts_registered = False
-            
-            # Register fonts if they exist
-            for font_path, font_name in font_paths:
-                if os.path.exists(font_path):
-                    try:
-                        pdfmetrics.registerFont(TTFont(font_name, font_path))
-                        chinese_fonts_registered = True
-                    except Exception as e:
-                        # Skip font registration if it fails
-                        continue
-            
-            # If no Chinese fonts were registered, we'll use reportlab's built-in fonts
-            # No need to register Helvetica as it's a built-in font
-            return chinese_fonts_registered
-                
-        except Exception as e:
-            # If font registration fails, we'll use reportlab's built-in fonts
-            return False
-    
-    def _process_conversion(self, input_path: str, temp_dir: str) -> Dict[str, Any]:
-        """Process the Excel to PDF conversion using openpyxl and reportlab."""
-        output_files = []
+            yield self.create_text_message(f"System Error: {str(e)}")
+
+class ExcelPdfConverter:
+    """
+    内部转换器类，负责具体的排版算法和PDF生成
+    """
+    def __init__(self, input_path: str, output_path: str):
+        self.input_path = input_path
+        self.output_path = output_path
+        self.font_name = "CustomChineseFont"
+        self.font_bold_name = "CustomChineseFont" # 只有单独字体文件时，粗体也用同一个
+        self.registered_font = False
         
+        # 页面配置 (A4)
+        self.page_width_pt_portrait = A4[0]  # ~595
+        self.page_height_pt_portrait = A4[1] # ~842
+        self.page_width_pt_landscape = A4[1] 
+        self.margin = 30
+        
+        # 初始化字体
+        self._register_fonts()
+
+    def _register_fonts(self):
+        """注册自定义字体，路径为 ../fonts/chinese_font.ttc"""
         try:
-            if not OPENPYXL_REPORTLAB_AVAILABLE:
-                return {"success": False, "message": "openpyxl and reportlab libraries are not available for Excel conversion"}
+            # 获取当前脚本所在目录
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            # 向上寻找 fonts 目录 (假设结构 plugin/tools/tool.py -> plugin/fonts/)
+            # 根据插件结构可能 path 需要调整，这里假设 fonts 与 tools 同级目录或者在根目录下
+            # 尝试路径 1: ../fonts/
+            font_path = os.path.join(os.path.dirname(current_dir), "fonts", "chinese_font.ttc")
             
-            # Register Chinese fonts
-            chinese_fonts_available = self._register_chinese_fonts()
-            
-            # Determine which fonts to use based on registration success
-            if chinese_fonts_available:
-                # Try to use Chinese fonts in order of preference
-                try:
-                    # Check if ChineseFont (project font) is available
-                    pdfmetrics.getFont("ChineseFont")
-                    normal_font = 'ChineseFont'
-                    bold_font = 'ChineseFont'  # Use the same font for bold as well
-                except:
-                    try:
-                        # Check if SimSun is available
-                        pdfmetrics.getFont("SimSun")
-                        normal_font = 'SimSun'
-                        bold_font = 'SimSun-Bold'
-                    except:
-                        try:
-                            # Check if Microsoft YaHei is available
-                            pdfmetrics.getFont("MicrosoftYaHei")
-                            normal_font = 'MicrosoftYaHei'
-                            bold_font = 'MicrosoftYaHei-Bold'
-                        except:
-                            try:
-                                # Check if SimHei is available
-                                pdfmetrics.getFont("SimHei")
-                                normal_font = 'SimHei'
-                                bold_font = 'SimHei-Bold'
-                            except:
-                                # Fallback to built-in fonts
-                                normal_font = 'Helvetica'
-                                bold_font = 'Helvetica-Bold'
+            if not os.path.exists(font_path):
+                # 备用路径: 当前目录下 fonts/
+                font_path = os.path.join(current_dir, "fonts", "chinese_font.ttc")
+
+            if os.path.exists(font_path):
+                pdfmetrics.registerFont(TTFont(self.font_name, font_path))
+                self.registered_font = True
             else:
-                # Use reportlab's built-in fonts
-                normal_font = 'Helvetica'
-                bold_font = 'Helvetica-Bold'
-            
-            # Generate output file path
-            base_name = os.path.splitext(os.path.basename(input_path))[0]
-            output_path = os.path.join(temp_dir, f"{base_name}.pdf")
-            
-            # Load Excel workbook
-            workbook = openpyxl.load_workbook(input_path)
-            
-            # Create PDF document
-            doc = SimpleDocTemplate(output_path, pagesize=A4)
-            elements = []
-            
-            # Get styles for Chinese text
-            styles = getSampleStyleSheet()
-            chinese_style = ParagraphStyle(
-                'ChineseStyle',
-                parent=styles['Normal'],
-                fontName=normal_font,
-                fontSize=10,
-                leading=14
-            )
-            
-            heading_style = ParagraphStyle(
-                'ChineseHeading',
-                parent=styles['Heading1'],
-                fontName=bold_font,
-                fontSize=14,
-                leading=18,
-                alignment=TA_CENTER
-            )
-            
-            # Process each sheet in the workbook
-            for sheet_name in workbook.sheetnames:
-                sheet = workbook[sheet_name]
-                
-                # Extract data from sheet
-                data = []
-                for row in sheet.iter_rows(values_only=True):
-                    # Convert None to empty string for display
-                    data_row = []
-                    for cell in row:
-                        if cell is not None:
-                            # Convert to string and ensure proper encoding for Chinese text
-                            cell_str = str(cell)
-                            # Ensure the string is properly encoded for Chinese characters
-                            if isinstance(cell_str, str):
-                                # No need to encode/decode, just ensure it's a proper string
-                                data_row.append(cell_str)
-                            else:
-                                # Convert to string if it's not already
-                                data_row.append(str(cell_str))
-                        else:
-                            data_row.append("")
-                    data.append(data_row)
-                
-                # Create table from data
-                if data:
-                    # Calculate column widths based on content
-                    col_count = len(data[0]) if data else 0
-                    col_widths = []
-                    
-                    for col_idx in range(col_count):
-                        max_length = 0
-                        for row in data:
-                            if col_idx < len(row) and row[col_idx]:
-                                cell_value = str(row[col_idx])
-                                max_length = max(max_length, len(cell_value))
-                        # Set column width with minimum and maximum limits
-                        col_width = min(max(max_length * 0.1, 0.5), 2.0) * inch
-                        col_widths.append(col_width)
-                    
-                    # Create table with style
-                    table = Table(data, colWidths=col_widths)
-                    
-                    # Add table style with Chinese font support
-                    style = TableStyle([
-                        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                        ('FONTNAME', (0, 0), (-1, 0), bold_font),
-                        ('FONTSIZE', (0, 0), (-1, 0), 12),
-                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-                        ('FONTNAME', (0, 1), (-1, -1), normal_font),
-                        ('FONTSIZE', (0, 1), (-1, -1), 10),
-                        ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                    ])
-                    
-                    table.setStyle(style)
-                    
-                    # Add sheet name as heading with Chinese font support
-                    heading = Paragraph(f"<b>{sheet_name}</b>", heading_style)
-                    elements.append(heading)
-                    elements.append(Spacer(1, 0.2 * inch))
-                    
-                    # Add table to elements
-                    elements.append(table)
-                    elements.append(Spacer(1, 0.5 * inch))
-            
-            # Build PDF document
-            doc.build(elements)
-            
-            # Wait for file to be fully written
-            time.sleep(2)
-            
-            # Check if file exists and has content
-            if not os.path.exists(output_path):
-                return {"success": False, "message": "Output PDF file was not created"}
-                
-            if os.path.getsize(output_path) == 0:
-                return {"success": False, "message": "Output PDF file is empty"}
-            
-            # Try multiple times to read the file
-            file_content = None
-            for attempt in range(3):
-                try:
-                    with open(output_path, 'rb') as f:
-                        file_content = f.read()
-                    break
-                except Exception as e:
-                    if attempt < 2:
-                        time.sleep(2)
-                    else:
-                        return {"success": False, "message": f"Error reading converted file: {str(e)}"}
-            
-            if file_content:
-                output_files.append({
-                    "path": output_path,
-                    "content": file_content,
-                    "filename": f"{base_name}.pdf"
-                })
-            else:
-                return {"success": False, "message": "Failed to read converted file after multiple attempts"}
-            
-            return {
-                "success": True, 
-                "message": "Excel spreadsheet converted to PDF successfully with Chinese font support",
-                "output_files": output_files
-            }
-                
+                # 回退：如果找不到字体，使用内置字体（中文会乱码，但至少不报错）
+                print(f"Warning: Font file not found at {font_path}, utilizing Helvetica")
+                self.font_name = "Helvetica"
+                self.font_bold_name = "Helvetica-Bold"
         except Exception as e:
-            return {"success": False, "message": f"Conversion error: {str(e)}"}
+            print(f"Font registration error: {e}")
+            self.font_name = "Helvetica"
+            self.font_bold_name = "Helvetica-Bold"
+
+    def _clean_cell_text(self, value: Any) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    def _measure_text_width(self, text: str, font_size: int) -> float:
+        """精确计算文本宽度的辅助函数"""
+        if not text:
+            return 0.0
+        try:
+            return pdfmetrics.stringWidth(text, self.font_name, font_size)
+        except:
+            return len(text) * font_size * 0.6
+
+    def _get_optimized_columns(self, data: List[List[str]], font_size: int, max_col_width_inch: float = 2.5) -> List[float]:
+        """
+        计算每列的最佳宽度
+        :return: 每一列的宽度列表 (单位: points)
+        """
+        if not data:
+            return []
+
+        num_cols = len(data[0])
+        col_widths = [0.0] * num_cols
+        
+        # 限制最大宽度的点数
+        max_width_pts = max_col_width_inch * inch 
+        min_width_pts = 20.0 # 最小宽度
+
+        # 采样前100行进行宽度估算（避免数据量过大太慢）
+        sample_data = data[:100]
+
+        for row in sample_data:
+            for i, cell_text in enumerate(row):
+                if i < num_cols:
+                    # 增加一些padding
+                    w = self._measure_text_width(cell_text, font_size) + 12 
+                    if w > col_widths[i]:
+                        col_widths[i] = w
+        
+        # 归一化：应用最大最小值限制
+        final_widths = []
+        for w in col_widths:
+            w = max(min_width_pts, w)
+            w = min(max_width_pts, w) # 如果超出最大宽度，后续使用 Paragraph 自动换行
+            final_widths.append(w)
+            
+        return final_widths
+
+    def convert(self) -> Dict[str, Any]:
+        try:
+            wb = openpyxl.load_workbook(self.input_path, data_only=True)
+            story = []
+            
+            # 使用 ReportLab 的各种样式
+            styles = getSampleStyleSheet()
+            
+            # 定义中文样式
+            normal_style = ParagraphStyle(
+                name='Normal_CN',
+                parent=styles['Normal'],
+                fontName=self.font_name,
+                fontSize=10,
+                leading=12, # 行间距
+                alignment=TA_CENTER,
+                wordWrap='CJK' # 支持中文换行
+            )
+            
+            title_style = ParagraphStyle(
+                name='Title_CN',
+                parent=styles['Heading1'],
+                fontName=self.font_bold_name,
+                fontSize=16,
+                leading=20,
+                alignment=TA_CENTER,
+                spaceAfter=20
+            )
+
+            # 页面模板配置
+            doc = SimpleDocTemplate(
+                self.output_path,
+                pagesize=A4,  # 默认初始值，后面会根据内容调整
+                leftMargin=self.margin,
+                rightMargin=self.margin,
+                topMargin=self.margin,
+                bottomMargin=self.margin
+            )
+
+            # 判断是否需要横向页面
+            use_landscape = False
+
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                
+                # 提取数据
+                raw_data = []
+                for row in ws.iter_rows(values_only=True):
+                    cleaned_row = [self._clean_cell_text(cell) for cell in row]
+                    # 跳过全空行
+                    if any(cleaned_row):
+                        raw_data.append(cleaned_row)
+                
+                if not raw_data:
+                    continue
+
+                # 添加标题
+                story.append(Paragraph(f"Sheet: {sheet_name}", title_style))
+                story.append(Spacer(1, 10))
+
+                # --- 核心：智能排版与切分逻辑 ---
+                
+                # 1. 初步计算列宽 (基于默认10号字体)
+                base_font_size = 10
+                col_widths = self._get_optimized_columns(raw_data, base_font_size)
+                total_width = sum(col_widths)
+                
+                # 定义可用宽度
+                avail_width_portrait = self.page_width_pt_portrait - (2 * self.margin)
+                avail_width_landscape = self.page_width_pt_landscape - (2 * self.margin)
+
+                # 决策
+                current_data_font_size = base_font_size
+                split_tables = False # 是否需要切分表格
+                
+                if total_width <= avail_width_portrait:
+                    # 方案A: 纵向足够
+                    pass 
+                elif total_width <= avail_width_landscape:
+                    # 方案B: 横向足够
+                    use_landscape = True
+                elif total_width <= avail_width_landscape * 1.25:
+                    # 方案C: 横向 + 缩小字体 (最多接受超出25%，通过缩小字体适配)
+                    use_landscape = True
+                    scale_factor = avail_width_landscape / total_width
+                    # 调整列宽和字号
+                    col_widths = [w * scale_factor for w in col_widths]
+                    current_data_font_size = max(6, int(base_font_size * scale_factor)) # 最小6号字
+                else:
+                    # 方案D: 表格太宽了，必须切分 (Vertical Slicing)
+                    use_landscape = True
+                    split_tables = True
+
+                # 构建表格数据 (将普通文本转换为支持换行的 Paragraph)
+                # 如果需要切分，逻辑会复杂一些
+                
+                if not split_tables:
+                    # 正常生成一个表格
+                    table_data = self._build_table_paragraphs(raw_data, normal_style, current_data_font_size)
+                    self._create_and_append_table(story, table_data, col_widths, current_data_font_size)
+                else:
+                    # 执行切分逻辑
+                    self._process_split_tables(story, raw_data, col_widths, avail_width_landscape, normal_style, base_font_size)
+
+                story.append(PageBreak())
+
+            # 设置最终文档页面方向
+            if use_landscape:
+                doc.pagesize = landscape(A4)
+            else:
+                doc.pagesize = A4
+                
+            doc.build(story)
+            
+            return {"success": True, "message": "PDF created"}
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return {"success": False, "message": str(e)}
+
+    def _build_table_paragraphs(self, data, base_style, font_size):
+        """将文本数据转换为 ReportLab 的 Paragraph 对象"""
+        processed_data = []
+        
+        # 创建特定字号的样式
+        cell_style = ParagraphStyle(
+            'CellStyle',
+            parent=base_style,
+            fontSize=font_size,
+            leading=font_size * 1.2
+        )
+
+        header_style = ParagraphStyle(
+            'HeaderStyle',
+            parent=cell_style,
+            fontName=self.font_bold_name,
+            textColor=colors.whitesmoke
+        )
+
+        for row_idx, row in enumerate(data):
+            new_row = []
+            for cell_val in row:
+                style = header_style if row_idx == 0 else cell_style
+                new_row.append(Paragraph(cell_val, style))
+            processed_data.append(new_row)
+        return processed_data
+
+    def _create_and_append_table(self, story, table_data, col_widths, font_size, table_title_suffix=""):
+        """创建并添加表格到 story"""
+        if table_title_suffix:
+             story.append(Paragraph(table_title_suffix, ParagraphStyle('sub', fontSize=8, textColor=colors.grey)))
+
+        table = Table(table_data, colWidths=col_widths, repeatRows=1)
+        
+        style_cmds = [
+            ('BACKGROUND', (0, 0), (-1, 0), colors.Color(0.2, 0.4, 0.6)), # 深蓝表头
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'), # 顶部对齐以适应换行
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('FONTNAME', (0, 0), (-1, -1), self.font_name),
+            ('FONTSIZE', (0, 0), (-1, -1), font_size),
+            ('topPadding', (0, 0), (-1, -1), 4),
+            ('bottomPadding', (0, 0), (-1, -1), 4),
+        ]
+        
+        table.setStyle(TableStyle(style_cmds))
+        story.append(table)
+        story.append(Spacer(1, 20))
+
+    def _process_split_tables(self, story, raw_data, all_col_widths, max_page_width, base_style, font_size):
+        """
+        切分超宽表格算法
+        """
+        header_row = raw_data[0]
+        data_rows = raw_data[1:]
+        
+        # 分组逻辑
+        slices = [] # 存储 [(start_col_idx, end_col_idx, current_slice_widths)]
+        
+        current_slice_start = 0
+        current_slice_width = 0
+        current_slice_widths = []
+        
+        for i, width in enumerate(all_col_widths):
+            # 如果单列就超过了页面宽度，强制将其限制为页面宽度
+            if width > max_page_width:
+                width = max_page_width
+            
+            if current_slice_width + width > max_page_width:
+                # 当前这一片装不下了，结束当前切片
+                slices.append((current_slice_start, i, current_slice_widths))
+                # 开启新切片
+                current_slice_start = i
+                current_slice_width = width
+                current_slice_widths = [width]
+            else:
+                current_slice_width += width
+                current_slice_widths.append(width)
+        
+        # 添加最后一个切片
+        if current_slice_widths:
+            slices.append((current_slice_start, len(all_col_widths), current_slice_widths))
+
+        # 为每个切片生成表格
+        total_parts = len(slices)
+        for idx, (start, end, widths) in enumerate(slices):
+            # 构建该切片的数据
+            # 必须包含表头
+            slice_data_raw = []
+            
+            # 1. 表头部分
+            header_slice = header_row[start:end]
+            slice_data_raw.append(header_slice)
+            
+            # 2. 数据部分
+            for row in data_rows:
+                slice_data_raw.append(row[start:end])
+            
+            # 构建 Paragraphs
+            table_data = self._build_table_paragraphs(slice_data_raw, base_style, font_size)
+            
+            suffix = f"(Part {idx + 1} of {total_parts})"
+            self._create_and_append_table(story, table_data, widths, font_size, table_title_suffix=suffix)
