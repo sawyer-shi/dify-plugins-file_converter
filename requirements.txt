@@ -7,9 +7,9 @@ PyMuPDF>=1.23.0
 pdfplumber>=0.10.0
 # docx2pdf>=0.1.8  # Requires MS Word or LibreOffice, not pure Python
 openpyxl>=3.0.9
-reportlab>=3.6.0
-Pillow>=9.0.0
-python-docx>=0.8.11
+reportlab>=4.0.0
+Pillow>=10.0.0
+python-docx>=1.1.0
 # Additional dependencies for pdf2image (poppler)
 poppler-utils>=0.1.0
 # Additional dependencies for PPT to PDF conversion
@@ -18,5 +18,5 @@ python-pptx>=0.6.21
 # Dependencies for HTML conversion
 beautifulsoup4>=4.9.0
 docxtpl>=0.3.0
-lxml>=4.6.0
+lxml>=4.9.0
 weasyprint>=60.0
