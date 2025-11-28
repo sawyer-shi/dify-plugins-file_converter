@@ -19,7 +19,7 @@ A powerful Dify plugin providing comprehensive local file conversion capabilitie
 3. Start using the various conversion tools immediately
 
 ## Core Features
-<img width="416" height="934" alt="image" src="https://github.com/user-attachments/assets/297c8414-a254-4016-b668-1bc9ee667188" />
+<img width="415" height="954" alt="image" src="https://github.com/user-attachments/assets/2a818093-bba6-4196-84e1-23186aaac2ca" />
 
 ### PDF Conversions
 - **PDF to Image**: Convert PDF documents to various image formats (.jpg, .jpeg, .png, .bmp, .tiff)
