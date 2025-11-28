@@ -19,6 +19,7 @@
 3. 立即开始使用各种转换工具
 
 ## 核心功能
+<img width="416" height="934" alt="image" src="https://github.com/user-attachments/assets/c50df3c2-0ab1-45db-9498-4ffb4bd689e9" />
 
 ### PDF转换
 - **PDF转图片**: 将PDF文档转换为各种图像格式（.jpg、.jpeg、.png、.bmp、.tiff）
