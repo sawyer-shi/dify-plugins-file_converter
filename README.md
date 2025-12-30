@@ -5,12 +5,12 @@ A powerful Dify plugin providing comprehensive local file conversion capabilitie
 ## Version Information
 
 - **Current Version**: v0.0.2
-- **Release Date**: 2025-12-30
+- **Release Date**: 2025-12-28
 - **Compatibility**: Dify Plugin Framework
 - **Python Version**: 3.12
 
 ### Version History
-- **v0.0.2** (2025-12-30): Added CSV to Excel, Excel to CSV, and CSV to PDF conversion capabilities with smart layout optimization
+- **v0.0.2** (2025-12-28): Added CSV to Excel, Excel to CSV, and CSV to PDF conversion capabilities with smart layout optimization
 - **v0.0.1** (2025-11-02): Initial release with comprehensive file conversion capabilities
 
 ## Quick Start
