@@ -1,0 +1,31 @@
+identity:
+  name: csv_2_pdf
+  author: AI Assistant
+  label:
+    en_US: CSV to PDF Converter
+    zh_Hans: CSV转PDF转换器
+description:
+  human:
+    en_US: Convert CSV files to PDF format with smart layout optimization. Supports multiple encodings, automatic column width adjustment, and landscape orientation for wide tables.
+    zh_Hans: 将CSV文件转换为PDF格式，支持智能布局优化。支持多种编码格式、自动调整列宽和横向布局处理宽表格。
+  llm: A tool that converts CSV files to PDF format with smart layout optimization. Supports multiple encodings, automatic column width adjustment, and landscape orientation for wide tables.
+  icon: icon.svg
+  tags:
+    - productivity
+    - utilities
+    - file
+    - converter
+parameters:
+  - name: input_file
+    type: file
+    required: true
+    label:
+      en_US: Input CSV File
+      zh_Hans: 输入CSV文件
+    human_description:
+      en_US: Upload the CSV file you want to convert to PDF format
+      zh_Hans: 上传您想要转换为PDF格式的CSV文件
+    form: llm
+extra:
+  python:
+    source: tools/csv_2_pdf.py
