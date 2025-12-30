@@ -122,6 +122,9 @@ class ExcelCsvConverter:
                     # 读取工作表数据
                     df = pd.read_excel(self.input_path, sheet_name=sheet_name)
                     
+                    # 将自动生成的 "Unnamed: X" 列名替换为空字符串
+                    df.columns = ['' if str(col).startswith('Unnamed: ') else col for col in df.columns]
+                    
                     # 清理工作表名称，用作文件名
                     safe_sheet_name = self._sanitize_filename(sheet_name)
                     
