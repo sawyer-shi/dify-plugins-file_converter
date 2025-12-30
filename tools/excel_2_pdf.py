@@ -12,6 +12,8 @@ from dify_plugin.file.file import File
 try:
     import openpyxl
     from openpyxl.utils import get_column_letter
+    import pandas as pd
+    import xlrd
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4, landscape, portrait
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -32,7 +34,7 @@ class ExcelToPdfTool(Tool):
 
     def _invoke(self, tool_parameters: dict[str, Any]) -> Generator[ToolInvokeMessage, None, None]:
         if not DEPENDENCIES_AVAILABLE:
-            yield self.create_text_message("Error: Required libraries (openpyxl, reportlab) are missing.")
+            yield self.create_text_message("Error: Required libraries (openpyxl, pandas, xlrd, reportlab) are missing.")
             return
 
         input_file = tool_parameters.get("input_file")
@@ -41,8 +43,8 @@ class ExcelToPdfTool(Tool):
             return
 
         # 1. 验证文件格式
-        if not input_file.extension or input_file.extension.lower() not in ['.xlsx']:
-            yield self.create_text_message("Error: Only .xlsx files are supported.")
+        if not input_file.extension or input_file.extension.lower() not in ['.xlsx', '.xls']:
+            yield self.create_text_message("Error: Only .xlsx or .xls files are supported.")
             return
 
         try:
@@ -178,7 +180,26 @@ class ExcelPdfConverter:
 
     def convert(self) -> Dict[str, Any]:
         try:
-            wb = openpyxl.load_workbook(self.input_path, data_only=True)
+            # 判断文件格式并选择合适的读取方式
+            if self.input_path.lower().endswith('.xls'):
+                # 使用 pandas + xlrd 读取 .xls 文件
+                excel_file = pd.ExcelFile(self.input_path, engine='xlrd')
+                sheets_data = {}
+                for sheet_name in excel_file.sheet_names:
+                    df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None)
+                    # 转换为二维列表，处理 NaN 值
+                    sheets_data[sheet_name] = df.where(pd.notnull(df), None).values.tolist()
+            else:
+                # 使用 openpyxl 读取 .xlsx 文件
+                wb = openpyxl.load_workbook(self.input_path, data_only=True)
+                sheets_data = {}
+                for sheet_name in wb.sheetnames:
+                    ws = wb[sheet_name]
+                    data = []
+                    for row in ws.iter_rows(values_only=True):
+                        data.append([self._clean_cell_text(cell) for cell in row])
+                    sheets_data[sheet_name] = data
+            
             story = []
             
             # 使用 ReportLab 的各种样式
@@ -218,18 +239,18 @@ class ExcelPdfConverter:
             # 判断是否需要横向页面
             use_landscape = False
 
-            for sheet_name in wb.sheetnames:
-                ws = wb[sheet_name]
+            for sheet_name in sheets_data:
+                raw_data = sheets_data[sheet_name]
                 
-                # 提取数据
-                raw_data = []
-                for row in ws.iter_rows(values_only=True):
+                # 清理数据
+                cleaned_data = []
+                for row in raw_data:
                     cleaned_row = [self._clean_cell_text(cell) for cell in row]
                     # 跳过全空行
                     if any(cleaned_row):
-                        raw_data.append(cleaned_row)
+                        cleaned_data.append(cleaned_row)
                 
-                if not raw_data:
+                if not cleaned_data:
                     continue
 
                 # 添加标题
@@ -240,7 +261,7 @@ class ExcelPdfConverter:
                 
                 # 1. 初步计算列宽 (基于默认10号字体)
                 base_font_size = 10
-                col_widths = self._get_optimized_columns(raw_data, base_font_size)
+                col_widths = self._get_optimized_columns(cleaned_data, base_font_size)
                 total_width = sum(col_widths)
                 
                 # 定义可用宽度
@@ -274,11 +295,11 @@ class ExcelPdfConverter:
                 
                 if not split_tables:
                     # 正常生成一个表格
-                    table_data = self._build_table_paragraphs(raw_data, normal_style, current_data_font_size)
+                    table_data = self._build_table_paragraphs(cleaned_data, normal_style, current_data_font_size)
                     self._create_and_append_table(story, table_data, col_widths, current_data_font_size)
                 else:
                     # 执行切分逻辑
-                    self._process_split_tables(story, raw_data, col_widths, avail_width_landscape, normal_style, base_font_size)
+                    self._process_split_tables(story, cleaned_data, col_widths, avail_width_landscape, normal_style, base_font_size)
 
                 story.append(PageBreak())
 

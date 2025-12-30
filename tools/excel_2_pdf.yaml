@@ -6,9 +6,9 @@ identity:
     zh_Hans: "Excel转PDF转换器"
 description:
   human:
-    en_US: "Convert Excel spreadsheets (.xlsx) to PDF format."
-    zh_Hans: "将Excel电子表格（.xlsx）转换为PDF格式。"
-  llm: "A tool that converts Excel spreadsheets (.xlsx) to PDF format using python-office library."
+    en_US: "Convert Excel spreadsheets (.xlsx, .xls) to PDF format."
+    zh_Hans: "将Excel电子表格（.xlsx, .xls）转换为PDF格式。"
+  llm: "A tool that converts Excel spreadsheets (.xlsx, .xls) to PDF format using python-office library."
 parameters:
   - name: input_file
     type: file

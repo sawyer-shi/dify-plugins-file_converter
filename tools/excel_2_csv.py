@@ -11,6 +11,7 @@ from dify_plugin.file.file import File
 try:
     import pandas as pd
     import openpyxl
+    import xlrd
     DEPENDENCIES_AVAILABLE = True
 except ImportError:
     DEPENDENCIES_AVAILABLE = False
@@ -24,7 +25,7 @@ class ExcelToCsvTool(Tool):
 
     def _invoke(self, tool_parameters: dict[str, Any]) -> Generator[ToolInvokeMessage, None, None]:
         if not DEPENDENCIES_AVAILABLE:
-            yield self.create_text_message("Error: Required libraries (pandas, openpyxl) are missing.")
+            yield self.create_text_message("Error: Required libraries (pandas, openpyxl, xlrd) are missing.")
             return
 
         input_file = tool_parameters.get("input_file")
@@ -50,13 +51,12 @@ class ExcelToCsvTool(Tool):
         
         # 验证文件是否看起来像Excel文件
         try:
-            # 检查文件是否是有效的ZIP文件（xlsx文件本质上是ZIP文件）
-            with tempfile.NamedTemporaryFile(suffix='.xlsx') as temp_file:
+            with tempfile.NamedTemporaryFile(suffix=input_file.extension) as temp_file:
                 temp_file.write(input_file.blob)
                 temp_file.flush()
-                with zipfile.ZipFile(temp_file.name, 'r') as test_zip:
-                    # 尝试读取ZIP内容，如果失败则不是有效的Excel文件
-                    test_zip.testzip()
+                
+                # 使用pandas尝试读取文件来验证
+                pd.ExcelFile(temp_file.name)
         except Exception:
             yield self.create_text_message("Warning: File may not be a valid Excel file.")
         

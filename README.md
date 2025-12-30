@@ -119,6 +119,13 @@ Extract text content from Word documents.
 Convert Excel spreadsheets to PDF format.
 - **Parameters**:
   - `input_file`: The Excel file to convert (required)
+- **Features**:
+  - Supports both .xlsx and .xls formats
+  - Smart layout optimization for different table sizes
+  - Automatic column width adjustment based on content
+  - Landscape orientation for wide tables
+  - Table splitting for excessively wide tables
+  - Font scaling to fit content within page boundaries
 
 #### 8. PowerPoint to PDF (ppt_2_pdf)
 Convert PowerPoint presentations to PDF format.
@@ -153,7 +160,7 @@ Convert Excel files to CSV format.
 - **Parameters**:
   - `input_file`: The Excel file to convert (required)
 - **Features**:
-  - Supports all worksheets in the Excel file
+  - Supports all worksheets in the Excel file (.xlsx, .xls)
   - Each worksheet is converted to a separate CSV file
   - Maintains data integrity and formatting
 
