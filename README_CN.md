@@ -4,12 +4,13 @@
 
 ## 版本信息
 
-- **当前版本**: v0.0.1
-- **发布日期**: 2025-11-02
+- **当前版本**: v0.0.2
+- **发布日期**: 2025-12-30
 - **兼容性**: Dify Plugin Framework
 - **Python版本**: 3.12
 
 ### 版本历史
+- **v0.0.2** (2025-12-30): 新增CSV转Excel、Excel转CSV和CSV转PDF功能，支持智能布局优化
 - **v0.0.1** (2025-11-02): 初始版本，提供全面的文件转换功能
 
 ## 快速开始
@@ -38,6 +39,11 @@
 ### 文本转换
 - **文本转PDF**: 将纯文本文件转换为PDF格式
 - **文本转Word**: 将纯文本文件转换为Word文档
+
+### CSV转换
+- **CSV转Excel**: 将CSV文件转换为Excel格式，支持自动列宽调整
+- **Excel转CSV**: 将Excel文件转换为CSV格式，支持所有工作表
+- **CSV转PDF**: 将CSV文件转换为PDF格式，支持智能布局优化和自动列宽调整
 
 ## 技术优势
 
@@ -131,6 +137,38 @@
 - **参数**:
   - `input_file`: 要转换的文本文件（必填）
 
+### CSV转换
+
+#### 11. CSV转Excel (csv_2_excel)
+将CSV文件转换为Excel格式。
+- **参数**:
+  - `input_file`: 要转换的CSV文件（必填）
+- **功能特点**:
+  - 支持多种编码格式（utf-8、gbk、gb2312、latin-1、iso-8859-1）
+  - 自动列宽调整
+  - 工作表名称规范化，符合Excel要求
+
+#### 12. Excel转CSV (excel_2_csv)
+将Excel文件转换为CSV格式。
+- **参数**:
+  - `input_file`: 要转换的Excel文件（必填）
+- **功能特点**:
+  - 支持Excel文件中的所有工作表
+  - 每个工作表转换为单独的CSV文件
+  - 保持数据完整性和格式
+
+#### 13. CSV转PDF (csv_2_pdf)
+将CSV文件转换为PDF格式，支持智能布局优化。
+- **参数**:
+  - `input_file`: 要转换的CSV文件（必填）
+- **功能特点**:
+  - 针对不同表格大小的智能布局优化
+  - 基于内容的自动列宽调整
+  - 宽表格自动使用横向布局
+  - 过宽表格自动分割处理
+  - 字体缩放以适应页面边界
+  - 多种编码支持（utf-8、gbk、gb2312、latin-1、iso-8859-1）
+
 ## 注意事项
 
 - 所有转换都在本地执行，无需将文件上传到外部服务
@@ -142,9 +180,15 @@
 
 - **作者**: `https://github.com/sawyer-shi`
 - **邮箱**: sawyer36@foxmail.com
-- **许可证**: MIT License
+- **许可证**: Apache License 2.0
 - **源码地址**: `https://github.com/sawyer-shi/dify-plugins-file_converter`
 - **支持**: 通过Dify平台和GitHub Issues
+
+## 许可证声明
+
+本项目采用Apache License 2.0许可证。完整的许可证文本请参见[LICENSE](LICENSE)文件。
+
+**注意**: 本项目之前使用MIT许可证，但从版本0.0.2开始已更新为Apache License 2.0。
 
 ---
 

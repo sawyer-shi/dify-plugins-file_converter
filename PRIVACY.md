@@ -1,8 +1,9 @@
 # Privacy Policy / 隐私政策 
 
 **Effective Date / 生效日期**: November 2, 2025 / 2025年11月2日 
-**Version / 版本**: v0.0.1 
+**Version / 版本**: v0.0.2 
 **Plugin Name / 插件名称**: File Converter / 文件转换器 
+**License / 许可证**: Apache License 2.0 
 
 --- 
 
@@ -11,6 +12,12 @@
 ### Overview 
 
 The File Converter Plugin ("Plugin") is designed to facilitate local file conversions between various formats while prioritizing user privacy and data security. This privacy policy explains how we handle your data when you use our plugin within the Dify platform. 
+
+### License Information 
+
+This plugin is licensed under the Apache License 2.0, which is a permissive open-source license that allows for the use, modification, and distribution of the software. The full license text is available in the LICENSE file included with this plugin. 
+
+**Note**: This project was previously licensed under MIT License but has been updated to Apache License 2.0 starting from version 0.0.2. 
 
 ### Data Collection 
 
@@ -63,6 +70,12 @@ The File Converter Plugin ("Plugin") is designed to facilitate local file conver
 
 文件转换器插件（"插件"）旨在促进各种格式之间的本地文件转换，同时优先保护用户隐私和数据安全。本隐私政策说明了您在Dify平台内使用我们的插件时，我们如何处理您的数据。 
 
+### 许可证信息 
+
+本插件采用Apache License 2.0许可证，这是一个宽松的开源许可证，允许使用、修改和分发软件。完整的许可证文本可在本插件附带的LICENSE文件中找到。 
+
+**注意**: 本项目之前使用MIT许可证，但从版本0.0.2开始已更新为Apache License 2.0。 
+
 ### 数据收集 
 
 **我们不收集的内容：** 
@@ -108,4 +121,4 @@ The File Converter Plugin ("Plugin") is designed to facilitate local file conver
 
 --- 
 
-**最后更新：** 2025年11月2日
+**最后更新：** 2025年12月30日

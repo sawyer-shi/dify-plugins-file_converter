@@ -4,12 +4,13 @@ A powerful Dify plugin providing comprehensive local file conversion capabilitie
 
 ## Version Information
 
-- **Current Version**: v0.0.1
-- **Release Date**: 2025-11-02
+- **Current Version**: v0.0.2
+- **Release Date**: 2025-12-30
 - **Compatibility**: Dify Plugin Framework
 - **Python Version**: 3.12
 
 ### Version History
+- **v0.0.2** (2025-12-30): Added CSV to Excel, Excel to CSV, and CSV to PDF conversion capabilities with smart layout optimization
 - **v0.0.1** (2025-11-02): Initial release with comprehensive file conversion capabilities
 
 ## Quick Start
@@ -38,6 +39,11 @@ A powerful Dify plugin providing comprehensive local file conversion capabilitie
 ### Text Conversions
 - **Text to PDF**: Convert plain text files to PDF format
 - **Text to Word**: Convert plain text files to Word documents
+
+### CSV Conversions
+- **CSV to Excel**: Convert CSV files to Excel format with automatic column width adjustment
+- **Excel to CSV**: Convert Excel files to CSV format, supporting all worksheets
+- **CSV to PDF**: Convert CSV files to PDF format with smart layout optimization and automatic column width adjustment
 
 ## Technical Advantages
 
@@ -131,6 +137,38 @@ Convert plain text files to Word documents.
 - **Parameters**:
   - `input_file`: The text file to convert (required)
 
+### CSV Conversions
+
+#### 11. CSV to Excel (csv_2_excel)
+Convert CSV files to Excel format.
+- **Parameters**:
+  - `input_file`: The CSV file to convert (required)
+- **Features**:
+  - Supports multiple encodings (utf-8, gbk, gb2312, latin-1, iso-8859-1)
+  - Automatic column width adjustment
+  - Sanitized sheet names to meet Excel specifications
+
+#### 12. Excel to CSV (excel_2_csv)
+Convert Excel files to CSV format.
+- **Parameters**:
+  - `input_file`: The Excel file to convert (required)
+- **Features**:
+  - Supports all worksheets in the Excel file
+  - Each worksheet is converted to a separate CSV file
+  - Maintains data integrity and formatting
+
+#### 13. CSV to PDF (csv_2_pdf)
+Convert CSV files to PDF format with smart layout optimization.
+- **Parameters**:
+  - `input_file`: The CSV file to convert (required)
+- **Features**:
+  - Smart layout optimization for different table sizes
+  - Automatic column width adjustment based on content
+  - Landscape orientation for wide tables
+  - Table splitting for excessively wide tables
+  - Font scaling to fit content within page boundaries
+  - Multiple encoding support (utf-8, gbk, gb2312, latin-1, iso-8859-1)
+
 ## Notes
 
 - All conversions are performed locally without uploading files to external services
@@ -142,9 +180,15 @@ Convert plain text files to Word documents.
 
 - **Author**: `https://github.com/sawyer-shi`
 - **Email**: sawyer36@foxmail.com
-- **License**: MIT License
+- **License**: Apache License 2.0
 - **Source Code**: `https://github.com/sawyer-shi/dify-plugins-file_converter`
 - **Support**: Through Dify platform and GitHub Issues
+
+## License Notice
+
+This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for the full license text.
+
+**Note**: This project was previously licensed under MIT License but has been updated to Apache License 2.0 starting from version 0.0.2.
 
 ---
 
