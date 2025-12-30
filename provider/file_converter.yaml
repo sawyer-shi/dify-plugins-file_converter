@@ -15,6 +15,8 @@ tools:
   - tools/pdf_2_word.yaml
   - tools/ppt_2_pdf.yaml
   - tools/excel_2_pdf.yaml
+  - tools/csv_2_excel.yaml
+  - tools/excel_2_csv.yaml
   - tools/word_2_text.yaml
   - tools/text_2_word.yaml
   - tools/text_2_pdf.yaml

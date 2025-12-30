@@ -1,0 +1,31 @@
+identity:
+  name: csv_2_excel
+  author: sawyer-shi
+  label:
+    en_US: CSV to Excel Converter
+    zh_Hans: CSV转Excel转换器
+description:
+  human:
+    en_US: Convert CSV files to Excel (.xlsx) format with automatic column width adjustment and multi-encoding support.
+    zh_Hans: 将CSV文件转换为Excel (.xlsx) 格式，支持自动调整列宽和多编码格式。
+  llm: A tool that converts CSV files to Excel (.xlsx) format with automatic column width adjustment and multi-encoding support.
+  icon: icon.svg
+  tags:
+    - productivity
+    - utilities
+    - file
+    - converter
+parameters:
+  - name: input_file
+    type: file
+    required: true
+    label:
+      en_US: Input CSV File
+      zh_Hans: 输入CSV文件
+    human_description:
+      en_US: Upload the CSV file you want to convert to Excel format
+      zh_Hans: 上传您想要转换为Excel格式的CSV文件
+    form: llm
+extra:
+  python:
+    source: tools/csv_2_excel.py

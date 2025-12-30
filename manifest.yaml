@@ -1,4 +1,4 @@
-version: 0.0.1
+version: 0.0.2
 type: plugin
 tags: 
   - productivity
@@ -9,8 +9,8 @@ label:
   en_US: File Converter
   zh_Hans: 文件转换器
 description:
-  en_US: 'Local File Converter: Supports PDF2Image, Image2PDF, Word2PDF, PDF2Word, PPT2PDF, Excel2PDF, Word2Text, Text2Word, Text2PDF, PDF2Text.'
-  zh_Hans: '本地文件转换器：支持PDF转图片、图片转PDF、Word转PDF‌、PDF转Word‌、PPT转PDF‌、Excel转PDF、Word转文本、文本转Word、文本转PDF、PDF转文本。'
+  en_US: 'Local File Converter: Supports PDF2Image, Image2PDF, Word2PDF, PDF2Word, PPT2PDF, Excel2PDF, CSV2Excel, Excel2CSV, Word2Text, Text2Word, Text2PDF, PDF2Text.'
+  zh_Hans: '本地文件转换器：支持PDF转图片、图片转PDF、Word转PDF‌、PDF转Word‌、PPT转PDF‌、Excel转PDF、CSV转Excel、Excel转CSV、Word转文本、文本转Word、文本转PDF、PDF转文本。'
 icon: icon.png
 resource:
   memory: 104857600
@@ -36,7 +36,7 @@ plugins:
   tools:
     - provider/file_converter.yaml
 meta:
-  version: 0.0.1
+  version: 0.0.2
   arch:
     - amd64
     - arm64

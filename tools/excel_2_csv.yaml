@@ -1,0 +1,31 @@
+identity:
+  name: excel_2_csv
+  author: sawyer-shi
+  label:
+    en_US: Excel to CSV Converter
+    zh_Hans: Excel转CSV转换器
+description:
+  human:
+    en_US: Convert Excel (.xlsx, .xls) files to CSV format. Each worksheet will be converted to a separate CSV file with automatic filename sanitization.
+    zh_Hans: 将Excel (.xlsx, .xls) 文件转换为CSV格式。每个工作表将转换为单独的CSV文件。
+  llm: A tool that converts Excel (.xlsx, .xls) files to CSV format. Each worksheet will be converted to a separate CSV file with automatic filename sanitization.
+  icon: icon.svg
+  tags:
+    - productivity
+    - utilities
+    - file
+    - converter
+parameters:
+  - name: input_file
+    type: file
+    required: true
+    label:
+      en_US: Input Excel File
+      zh_Hans: 输入Excel文件
+    human_description:
+      en_US: Upload the Excel file you want to convert to CSV format
+      zh_Hans: 上传您想要转换为CSV格式的Excel文件
+    form: llm
+extra:
+  python:
+    source: tools/excel_2_csv.py
